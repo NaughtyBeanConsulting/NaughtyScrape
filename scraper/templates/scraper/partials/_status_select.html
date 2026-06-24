@@ -1,0 +1,19 @@
+{% load scraper_extras %}
+{% comment %}
+This select lives inside the bulk "#leads-table" form alongside one status
+select per row. To avoid htmx serialising the whole form (every row's status)
+and the server reading the wrong one, each select gets a UNIQUE name
+(status-<pk>) and hx-params restricts the request to just that field. The view
+reads status-<pk> using the pk from the URL. CSRF travels via the X-CSRFToken
+header set on <body>.
+{% endcomment %}
+<select name="status-{{ lead.pk }}"
+        hx-post="{% url 'scraper:lead_status' lead.pk %}"
+        hx-target="closest .status-control"
+        hx-swap="innerHTML"
+        hx-params="status-{{ lead.pk }}"
+        class="rounded-full border-0 text-xs font-medium px-2.5 py-1 cursor-pointer focus:ring-2 focus:ring-amber-400 {{ lead.status|lead_status_classes }}">
+  {% for val, label in lead_statuses %}
+    <option value="{{ val }}" {% if lead.status == val %}selected{% endif %}>{{ label }}</option>
+  {% endfor %}
+</select>

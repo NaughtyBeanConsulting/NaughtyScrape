@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Team · NaughtyScrape{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto">
+  <h1 class="text-2xl font-bold text-stone-900 mb-1">Team</h1>
+  <p class="text-sm text-stone-500 mb-6">Admins can run searches, enrichment, and manage the team. Viewers can browse and manage the pipeline.</p>
+
+  <div class="grid lg:grid-cols-3 gap-6">
+    <!-- Members -->
+    <div class="lg:col-span-2 rounded-xl bg-white shadow-sm border border-gray-100 overflow-hidden">
+      <table class="min-w-full divide-y divide-gray-100 text-sm">
+        <thead class="bg-stone-50 text-stone-500">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">User</th>
+            <th class="px-4 py-3 text-left font-medium">Role</th>
+            <th class="px-4 py-3 text-left font-medium">Status</th>
+            <th class="px-4 py-3"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-50">
+          {% for m in members %}
+          <tr class="{% if not m.is_active %}opacity-50{% endif %}">
+            <td class="px-4 py-3">
+              <div class="font-medium text-stone-800">{{ m.email }}</div>
+              {% if m.get_full_name %}<div class="text-xs text-stone-400">{{ m.get_full_name }}</div>{% endif %}
+              {% if m.is_superuser %}<span class="text-[11px] rounded bg-stone-100 px-1.5 py-0.5 text-stone-500">superuser</span>{% endif %}
+            </td>
+            <td class="px-4 py-3">
+              <form method="post" action="{% url 'scraper:team_role' m.pk %}">
+                {% csrf_token %}
+                <select name="role" onchange="this.form.submit()"
+                        class="rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-amber-400 focus:ring-amber-400">
+                  {% for val, label in roles %}
+                    <option value="{{ val }}" {% if m.role == val %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </form>
+            </td>
+            <td class="px-4 py-3">
+              {% if m.is_active %}
+                <span class="rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-xs">Active</span>
+              {% else %}
+                <span class="rounded-full bg-gray-100 text-gray-500 px-2 py-0.5 text-xs">Inactive</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 text-right">
+              {% if m != request.user %}
+              <form method="post" action="{% url 'scraper:team_toggle' m.pk %}">
+                {% csrf_token %}
+                <button class="text-xs {% if m.is_active %}text-rose-600{% else %}text-emerald-600{% endif %} hover:underline">
+                  {% if m.is_active %}Deactivate{% else %}Activate{% endif %}
+                </button>
+              </form>
+              {% else %}<span class="text-xs text-stone-300">you</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Add member -->
+    <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+      <h2 class="font-semibold text-stone-900 mb-4">Add team member</h2>
+      <form method="post" action="{% url 'scraper:team_create' %}" class="space-y-3">
+        {% csrf_token %}
+        <div>
+          <label class="block text-sm font-medium text-stone-700 mb-1">Email</label>
+          {{ form.email }}
+          {% for e in form.email.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-stone-700 mb-1">Full name <span class="text-stone-400">(optional)</span></label>
+          {{ form.full_name }}
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-stone-700 mb-1">Role</label>
+          {{ form.role }}
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-stone-700 mb-1">Password</label>
+          {{ form.password }}
+          {% for e in form.password.errors %}<p class="mt-1 text-xs text-rose-600">{{ e }}</p>{% endfor %}
+        </div>
+        <button type="submit" class="w-full rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-stone-900 hover:bg-amber-400">Add member</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

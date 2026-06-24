@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Sign in · NaughtyScrape{% endblock %}
+
+{% block content %}
+<div class="min-h-[70vh] flex items-center justify-center">
+  <div class="w-full max-w-sm">
+    <div class="text-center mb-6">
+      <div class="text-4xl">☕</div>
+      <h1 class="mt-2 text-xl font-bold text-stone-900">Sign in to NaughtyScrape</h1>
+      <p class="text-sm text-stone-500">Coffee-shop lead pipeline</p>
+    </div>
+
+    <form method="post" action="{% url 'login' %}" class="space-y-4 rounded-xl bg-white p-6 shadow-sm border border-gray-100">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next }}">
+
+      {% if form.non_field_errors %}
+        <div class="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {% for err in form.non_field_errors %}{{ err }}{% endfor %}
+        </div>
+      {% endif %}
+
+      <div>
+        <label class="block text-sm font-medium text-stone-700 mb-1" for="{{ form.username.id_for_label }}">Email</label>
+        {{ form.username }}
+        {% for err in form.username.errors %}<p class="mt-1 text-xs text-rose-600">{{ err }}</p>{% endfor %}
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-stone-700 mb-1" for="{{ form.password.id_for_label }}">Password</label>
+        {{ form.password }}
+        {% for err in form.password.errors %}<p class="mt-1 text-xs text-rose-600">{{ err }}</p>{% endfor %}
+      </div>
+
+      <button type="submit" class="w-full rounded-md bg-amber-500 px-4 py-2.5 text-sm font-semibold text-stone-900 hover:bg-amber-400">
+        Sign in
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}

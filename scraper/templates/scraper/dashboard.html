@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% load scraper_extras %}
+{% block title %}Dashboard · NaughtyScrape{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-bold text-stone-900">Dashboard</h1>
+    <p class="text-sm text-stone-500">Coffee-shop lead pipeline for clickcollect.coffee</p>
+  </div>
+  {% if is_app_admin %}<a href="{% url 'scraper:search' %}" class="rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-stone-900 hover:bg-amber-400">+ New search</a>{% endif %}
+</div>
+
+{% if not has_api_key %}
+<div class="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+  <span class="font-semibold">Heads up:</span> <code class="rounded bg-amber-100 px-1">GOOGLE_MAPS_API_KEY</code> isn't set in your <code class="rounded bg-amber-100 px-1">.env</code>.
+  Add your Places API (New) key and restart the server before running a search.
+</div>
+{% endif %}
+
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+  <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+    <div class="text-sm text-stone-500">Total leads</div>
+    <div class="mt-1 text-3xl font-bold text-stone-900">{{ total }}</div>
+  </div>
+  <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+    <div class="text-sm text-stone-500">With website</div>
+    <div class="mt-1 text-3xl font-bold text-stone-900">{{ with_website }}</div>
+  </div>
+  <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+    <div class="text-sm text-stone-500">With email</div>
+    <div class="mt-1 text-3xl font-bold text-emerald-600">{{ with_email }}</div>
+  </div>
+  <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+    <div class="text-sm text-stone-500">Not yet enriched</div>
+    <div class="mt-1 text-3xl font-bold text-stone-900">{{ not_enriched }}</div>
+    {% if not_enriched and is_app_admin %}
+    <form method="post" action="{% url 'scraper:leads_enrich' %}" class="mt-2">
+      {% csrf_token %}
+      <button class="text-xs font-medium text-amber-700 hover:underline">Enrich all →</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-6">
+  <!-- Sales funnel -->
+  <div class="lg:col-span-2 rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-semibold text-stone-900">Sales funnel</h2>
+      <span class="text-xs text-stone-400">based on current lead status</span>
+    </div>
+
+    <!-- headline metrics -->
+    <div class="grid grid-cols-3 gap-3 mb-5">
+      <div class="rounded-lg bg-stone-50 p-3 text-center">
+        <div class="text-2xl font-bold text-stone-900">{{ funnel_metrics.pipeline }}</div>
+        <div class="text-xs text-stone-500">in pipeline</div>
+      </div>
+      <div class="rounded-lg bg-emerald-50 p-3 text-center">
+        <div class="text-2xl font-bold text-emerald-600">{{ funnel_metrics.won }}</div>
+        <div class="text-xs text-stone-500">won</div>
+      </div>
+      <div class="rounded-lg bg-stone-50 p-3 text-center">
+        <div class="text-2xl font-bold text-stone-900">{{ funnel_metrics.overall_conv }}%</div>
+        <div class="text-xs text-stone-500">new → won</div>
+      </div>
+    </div>
+
+    {% if funnel_metrics.pipeline %}
+    <div class="space-y-1">
+      {% for s in funnel %}
+        {% if s.conv_from_prev is not None %}
+          <div class="text-center text-xs text-stone-400 py-0.5">↓ {{ s.conv_from_prev }}% advanced</div>
+        {% endif %}
+        <a href="{% url 'scraper:leads' %}?status={{ s.value }}"
+           class="block mx-auto rounded-lg {{ s.color }} text-white px-4 py-2.5 transition hover:opacity-90"
+           style="width: max(40%, {{ s.pct_top }}%)" title="{{ s.label }}: {{ s.in_stage }} currently at this stage">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-sm font-medium">{{ s.label }}</span>
+            <span class="whitespace-nowrap">
+              <span class="text-lg font-bold">{{ s.reached }}</span>
+              <span class="text-xs opacity-80">{{ s.pct_top }}%</span>
+            </span>
+          </div>
+          <div class="text-[11px] opacity-80">{{ s.in_stage }} currently here</div>
+        </a>
+      {% endfor %}
+    </div>
+
+    <div class="mt-4 flex items-center justify-center gap-2 text-xs">
+      <span class="text-stone-400">Disqualified:</span>
+      <a href="{% url 'scraper:leads' %}?status=lost" class="rounded-full bg-rose-100 text-rose-700 px-3 py-1">Lost {{ funnel_metrics.lost }}</a>
+      <a href="{% url 'scraper:leads' %}?status=not_a_fit" class="rounded-full bg-gray-100 text-gray-600 px-3 py-1">Not a fit {{ funnel_metrics.not_a_fit }}</a>
+    </div>
+    {% else %}
+    <p class="text-sm text-stone-400 text-center py-6">No leads yet — run a search to start filling the funnel.</p>
+    {% endif %}
+
+    <h2 class="font-semibold text-stone-900 mt-6 mb-3">Top countries</h2>
+    {% if top_countries %}
+      <div class="flex flex-wrap gap-2">
+        {% for c in top_countries %}
+          <a href="{% url 'scraper:leads' %}?country={{ c.country|urlencode }}" class="rounded-full bg-stone-100 hover:bg-stone-200 px-3 py-1 text-xs">
+            {{ c.country }} <span class="font-semibold">{{ c.n }}</span>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="text-sm text-stone-400">No leads yet — run a search to get started.</p>
+    {% endif %}
+  </div>
+
+  <!-- Recent jobs -->
+  <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-semibold text-stone-900">Recent jobs</h2>
+      <a href="{% url 'scraper:jobs' %}" class="text-xs text-amber-700 hover:underline">All jobs →</a>
+    </div>
+    <div class="space-y-2">
+      {% for job in recent_jobs %}
+        <a href="{% url 'scraper:job_detail' job.pk %}" class="block rounded-lg border border-gray-100 hover:border-amber-200 p-3">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-medium truncate">{{ job.query|default:job.get_kind_display }}</span>
+            <span class="rounded-full px-2 py-0.5 text-xs font-medium {{ job.status|job_status_classes }}">{{ job.get_status_display }}</span>
+          </div>
+          <div class="mt-1 text-xs text-stone-500">{{ job.results_found }} found · {{ job.new_count }} new · {{ job.created_at|timesince }} ago</div>
+        </a>
+      {% empty %}
+        <p class="text-sm text-stone-400">No jobs yet.</p>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

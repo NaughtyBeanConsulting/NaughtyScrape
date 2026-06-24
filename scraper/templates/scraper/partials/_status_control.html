@@ -1,0 +1,6 @@
+{% comment %}
+Stable wrapper for the inline status select. htmx swaps this span's innerHTML
+(not the select itself) so the freshly-rendered <select> reliably shows the new
+value + colour instead of snapping back to the first option.
+{% endcomment %}
+<span class="status-control inline-block">{% include "scraper/partials/_status_select.html" %}</span>

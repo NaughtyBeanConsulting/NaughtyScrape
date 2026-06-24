@@ -1,0 +1,89 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}NaughtyScrape{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'css/tailwind.css' %}">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☕</text></svg>">
+</head>
+<body class="h-full text-gray-800" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+<div class="min-h-full">
+  <nav class="bg-stone-900 text-stone-100">
+    <div class="mx-auto max-w-7xl px-4">
+      <div class="flex h-14 items-center justify-between">
+        <div class="flex items-center gap-6">
+          <a href="{% url 'scraper:dashboard' %}" class="flex items-center gap-2 font-semibold">
+            <span class="text-xl">☕</span> NaughtyScrape
+          </a>
+          {% if request.user.is_authenticated %}
+          <div class="hidden sm:flex items-center gap-1 text-sm">
+            {% url 'scraper:dashboard' as u_dash %}
+            {% url 'scraper:search' as u_search %}
+            {% url 'scraper:leads' as u_leads %}
+            {% url 'scraper:jobs' as u_jobs %}
+            {% url 'scraper:team' as u_team %}
+            <a href="{{ u_dash }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if request.path == u_dash %}bg-stone-700{% endif %}">Dashboard</a>
+            {% if is_app_admin %}<a href="{{ u_search }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if request.path == u_search %}bg-stone-700{% endif %}">New search</a>{% endif %}
+            <a href="{{ u_leads }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_leads in request.path %}bg-stone-700{% endif %}">Leads</a>
+            <a href="{{ u_jobs }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_jobs in request.path %}bg-stone-700{% endif %}">Jobs</a>
+            {% if is_app_admin %}<a href="{{ u_team }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_team in request.path %}bg-stone-700{% endif %}">Team</a>{% endif %}
+          </div>
+          {% endif %}
+        </div>
+        {% if request.user.is_authenticated %}
+        <div class="flex items-center gap-3 text-sm" x-data="{ open: false }">
+          <span class="hidden sm:inline text-stone-300">{{ nav_total_leads }} leads</span>
+          {% if nav_active_jobs %}
+            <span class="inline-flex items-center gap-1.5 rounded-full bg-blue-500/20 text-blue-200 px-2.5 py-1 text-xs">
+              <span class="h-2 w-2 rounded-full bg-blue-400 animate-pulse"></span>
+              {{ nav_active_jobs }} running
+            </span>
+          {% endif %}
+          {% if is_app_admin %}
+            <a href="{% url 'scraper:search' %}" class="rounded-md bg-amber-500 px-3 py-1.5 font-medium text-stone-900 hover:bg-amber-400">+ Search</a>
+          {% endif %}
+          <div class="relative">
+            <button @click="open = !open" class="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-stone-700">
+              <span class="hidden sm:inline">{{ request.user.email }}</span>
+              <span class="rounded-full px-2 py-0.5 text-[11px] {% if is_app_admin %}bg-violet-500/30 text-violet-200{% else %}bg-stone-600 text-stone-200{% endif %}">{% if is_app_admin %}Admin{% else %}Viewer{% endif %}</span>
+              <span class="text-stone-400">▾</span>
+            </button>
+            <div x-show="open" @click.outside="open = false" x-cloak
+                 class="absolute right-0 mt-2 w-44 rounded-md bg-white text-stone-700 shadow-lg ring-1 ring-black/5 py-1 z-20">
+              {% if is_app_admin %}<a href="{% url 'scraper:team' %}" class="block px-4 py-2 text-sm hover:bg-stone-50">Team</a>{% endif %}
+              <form method="post" action="{% url 'logout' %}">
+                {% csrf_token %}
+                <button class="block w-full text-left px-4 py-2 text-sm text-rose-600 hover:bg-stone-50">Sign out</button>
+              </form>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </nav>
+
+  {% if messages %}
+    <div class="mx-auto max-w-7xl px-4 pt-4 space-y-2"
+         x-data x-init="setTimeout(() => $el.querySelectorAll('[data-msg]').forEach(e => e.remove()), 6000)">
+      {% for message in messages %}
+        <div data-msg class="rounded-md border px-4 py-2 text-sm
+          {% if message.tags == 'error' %}border-rose-200 bg-rose-50 text-rose-700
+          {% elif message.tags == 'success' %}border-emerald-200 bg-emerald-50 text-emerald-700
+          {% else %}border-sky-200 bg-sky-50 text-sky-700{% endif %}">
+          {{ message }}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <main class="mx-auto max-w-7xl px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

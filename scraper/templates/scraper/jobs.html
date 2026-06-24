@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% load scraper_extras %}
+{% block title %}Jobs · NaughtyScrape{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold text-stone-900">Jobs</h1>
+  <a href="{% url 'scraper:search' %}" class="rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-stone-900 hover:bg-amber-400">+ New search</a>
+</div>
+
+<div class="overflow-hidden rounded-xl bg-white shadow-sm border border-gray-100">
+  <table class="min-w-full divide-y divide-gray-100 text-sm">
+    <thead class="bg-stone-50 text-stone-500">
+      <tr>
+        <th class="px-4 py-3 text-left font-medium">#</th>
+        <th class="px-4 py-3 text-left font-medium">Type / query</th>
+        <th class="px-4 py-3 text-left font-medium">Status</th>
+        <th class="px-4 py-3 text-right font-medium">Progress</th>
+        <th class="px-4 py-3 text-right font-medium">Found</th>
+        <th class="px-4 py-3 text-right font-medium">New</th>
+        <th class="px-4 py-3 text-right font-medium">Created</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-50">
+      {% for job in page %}
+        <tr class="hover:bg-stone-50 cursor-pointer" onclick="window.location='{% url 'scraper:job_detail' job.pk %}'">
+          <td class="px-4 py-3 text-stone-400">{{ job.pk }}</td>
+          <td class="px-4 py-3">
+            <div class="font-medium text-stone-800">{{ job.query|default:job.get_kind_display }}</div>
+            <div class="text-xs text-stone-400">{{ job.get_kind_display }}{% if job.locations %} · {{ job.locations|length }} location(s){% endif %}</div>
+          </td>
+          <td class="px-4 py-3"><span class="rounded-full px-2 py-0.5 text-xs font-medium {{ job.status|job_status_classes }}">{{ job.get_status_display }}</span></td>
+          <td class="px-4 py-3 text-right text-stone-600">{{ job.processed }}/{{ job.total }}</td>
+          <td class="px-4 py-3 text-right text-stone-600">{{ job.results_found }}</td>
+          <td class="px-4 py-3 text-right font-medium text-emerald-600">{{ job.new_count }}</td>
+          <td class="px-4 py-3 text-right text-stone-400">{{ job.created_at|timesince }} ago</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7" class="px-4 py-10 text-center text-stone-400">No jobs yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if page.paginator.num_pages > 1 %}
+<div class="mt-4 flex items-center justify-center gap-2 text-sm">
+  {% if page.has_previous %}<a href="?page={{ page.previous_page_number }}" class="rounded border px-3 py-1 hover:bg-stone-50">← Prev</a>{% endif %}
+  <span class="text-stone-500">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}<a href="?page={{ page.next_page_number }}" class="rounded border px-3 py-1 hover:bg-stone-50">Next →</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

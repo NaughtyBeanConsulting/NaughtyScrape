@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% load scraper_extras %}
+{% block title %}{{ lead.name }} · NaughtyScrape{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+  <div class="mb-4">
+    <a href="{% url 'scraper:leads' %}" class="text-sm text-stone-500 hover:underline">← Leads</a>
+  </div>
+
+  <div class="flex items-start justify-between gap-4 mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-stone-900">{{ lead.name }}</h1>
+      <p class="text-sm text-stone-500">{{ lead.formatted_address }}</p>
+      <div class="mt-2 flex items-center gap-2 text-sm">
+        {% if lead.rating %}<span class="text-stone-700">{{ lead.rating }} <span class="text-amber-400">★</span> · {{ lead.user_ratings_total }} reviews</span>{% endif %}
+        {% if lead.business_status %}<span class="rounded-full bg-stone-100 px-2 py-0.5 text-xs">{{ lead.business_status }}</span>{% endif %}
+      </div>
+    </div>
+    <div class="shrink-0">{% include "scraper/partials/_status_control.html" with lead=lead %}</div>
+  </div>
+
+  <div class="grid md:grid-cols-3 gap-6">
+    <!-- Contact + meta -->
+    <div class="md:col-span-2 space-y-6">
+      <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+        <h2 class="font-semibold text-stone-900 mb-3">Contact</h2>
+        <dl class="grid sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+          <div>
+            <dt class="text-stone-400">Phone</dt>
+            <dd class="text-stone-800">{{ lead.international_phone|default:lead.national_phone|default:"—" }}</dd>
+          </div>
+          <div>
+            <dt class="text-stone-400">Website</dt>
+            <dd>{% if lead.website %}<a href="{{ lead.website }}" target="_blank" rel="noopener" class="text-sky-600 hover:underline break-all">{{ lead.website }}</a>{% else %}—{% endif %}</dd>
+          </div>
+          <div class="sm:col-span-2">
+            <dt class="text-stone-400">Emails</dt>
+            <dd class="text-stone-800">
+              {% if lead.emails %}
+                <div class="flex flex-wrap gap-1.5 mt-1">
+                  {% for email in lead.emails %}
+                    <a href="mailto:{{ email }}" class="rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-1 text-xs hover:bg-emerald-100">{{ email }}</a>
+                  {% endfor %}
+                </div>
+              {% else %}<span class="text-stone-400">None found yet.</span>{% endif %}
+            </dd>
+          </div>
+          {% if lead.social_links %}
+          <div class="sm:col-span-2">
+            <dt class="text-stone-400">Social</dt>
+            <dd class="flex flex-wrap gap-2 mt-1">
+              {% for name, url in lead.social_links.items %}
+                <a href="{{ url }}" target="_blank" rel="noopener" class="rounded-full bg-stone-100 px-2.5 py-1 text-xs hover:bg-stone-200 capitalize">{{ name }}</a>
+              {% endfor %}
+            </dd>
+          </div>
+          {% endif %}
+          <div class="sm:col-span-2 flex flex-wrap gap-3 pt-1">
+            {% if lead.google_maps_uri %}<a href="{{ lead.google_maps_uri }}" target="_blank" rel="noopener" class="text-xs text-amber-700 hover:underline">View on Google Maps →</a>{% endif %}
+            <span class="rounded px-1.5 py-0.5 text-[11px] {{ lead.enrichment_status|enrichment_classes }}">Enrichment: {{ lead.get_enrichment_status_display }}</span>
+          </div>
+        </dl>
+        {% if lead.enrichment_error %}<p class="mt-3 text-xs text-rose-600">Last enrichment error: {{ lead.enrichment_error }}</p>{% endif %}
+        {% if lead.website and is_app_admin %}
+        <form method="post" action="{% url 'scraper:lead_enrich' lead.pk %}" class="mt-4">
+          {% csrf_token %}
+          <button class="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm hover:bg-stone-50">✨ Enrich this website</button>
+        </form>
+        {% endif %}
+      </div>
+
+      <!-- Notes -->
+      <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold text-stone-900">Notes</h2>
+          <span id="notes-status" class="text-xs"></span>
+        </div>
+        <form hx-post="{% url 'scraper:lead_notes' lead.pk %}" hx-target="#notes-status" hx-swap="innerHTML">
+          <textarea name="notes" rows="5" placeholder="Outreach notes, contact attempts, fit…"
+                    class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-400 focus:ring-amber-400">{{ lead.notes }}</textarea>
+          <button class="mt-2 rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-stone-900 hover:bg-amber-400">Save notes</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Meta sidebar -->
+    <div class="space-y-4">
+      <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100 text-sm space-y-3">
+        <div>
+          <div class="text-stone-400 text-xs">Source query</div>
+          <div class="text-stone-800">{{ lead.source_query|default:"—" }}</div>
+        </div>
+        <div>
+          <div class="text-stone-400 text-xs">Primary type</div>
+          <div class="text-stone-800">{{ lead.primary_type|default:"—" }}</div>
+        </div>
+        {% if lead.types %}
+        <div>
+          <div class="text-stone-400 text-xs">Types</div>
+          <div class="flex flex-wrap gap-1 mt-1">
+            {% for t in lead.types %}<span class="rounded bg-stone-100 px-1.5 py-0.5 text-[11px] text-stone-600">{{ t }}</span>{% endfor %}
+          </div>
+        </div>
+        {% endif %}
+        <div>
+          <div class="text-stone-400 text-xs">First seen</div>
+          <div class="text-stone-800">{{ lead.first_seen|date:"j M Y, H:i" }}</div>
+        </div>
+        {% if lead.contacted_at %}
+        <div>
+          <div class="text-stone-400 text-xs">Contacted</div>
+          <div class="text-stone-800">{{ lead.contacted_at|date:"j M Y, H:i" }}</div>
+        </div>
+        {% endif %}
+        {% if lead.source_job_id %}
+        <a href="{% url 'scraper:job_detail' lead.source_job_id %}" class="inline-block text-xs text-amber-700 hover:underline">View source job →</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

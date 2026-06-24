@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}New search · NaughtyScrape{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+  <h1 class="text-2xl font-bold text-stone-900 mb-1">New search</h1>
+  <p class="text-sm text-stone-500 mb-6">
+    Runs one Google Places (New) text search per location, up to 60 results each.
+    Queued and processed in the background.
+  </p>
+
+  <form method="post" action="{% url 'scraper:search' %}"
+        x-data="{
+          query: 'coffee shops',
+          locations: '',
+          seed: '{{ seed_cities_text|escapejs }}',
+          get locationCount() { return this.locations.split('\n').map(s=>s.trim()).filter(Boolean).length; },
+        }"
+        class="space-y-6 rounded-xl bg-white p-6 shadow-sm border border-gray-100">
+    {% csrf_token %}
+
+    <!-- Query -->
+    <div>
+      <label class="block text-sm font-medium text-stone-700 mb-1">Base query</label>
+      <input name="query" x-model="query" type="text" placeholder="coffee shops"
+             class="w-full rounded-md border-gray-300 border px-3 py-2 focus:border-amber-400 focus:ring-amber-400">
+      <div class="mt-2 flex flex-wrap gap-1.5">
+        {% for preset in query_presets %}
+          <button type="button" @click="query = '{{ preset }}'"
+                  class="rounded-full bg-stone-100 hover:bg-stone-200 px-2.5 py-1 text-xs">{{ preset }}</button>
+        {% endfor %}
+      </div>
+      <p class="mt-1 text-xs text-stone-400">Each location is appended as “<span x-text="query"></span> in &lt;location&gt;”.</p>
+    </div>
+
+    <!-- Locations -->
+    <div>
+      <div class="flex items-center justify-between mb-1">
+        <label class="block text-sm font-medium text-stone-700">Locations (one per line)</label>
+        <span class="text-xs text-stone-500"><span x-text="locationCount" class="font-semibold"></span> location(s)</span>
+      </div>
+      <textarea name="locations" x-model="locations" rows="8" placeholder="London, UK&#10;Cape Town, South Africa&#10;Melbourne, Australia"
+                class="w-full font-mono text-sm rounded-md border-gray-300 border px-3 py-2 focus:border-amber-400 focus:ring-amber-400"></textarea>
+      <div class="mt-2 flex flex-wrap gap-2">
+        <button type="button" @click="locations = seed"
+                class="rounded-md bg-stone-800 text-white hover:bg-stone-700 px-3 py-1.5 text-xs font-medium">🌍 Fill world cities</button>
+        <button type="button" @click="locations = ''"
+                class="rounded-md bg-stone-100 hover:bg-stone-200 px-3 py-1.5 text-xs">Clear</button>
+      </div>
+    </div>
+
+    <!-- Options -->
+    <div class="grid sm:grid-cols-3 gap-4">
+      <div>
+        <label class="block text-sm font-medium text-stone-700 mb-1">Pages per location</label>
+        <select name="max_pages" class="w-full rounded-md border-gray-300 border px-3 py-2 focus:border-amber-400 focus:ring-amber-400">
+          <option value="1">1 (≤20 results)</option>
+          <option value="2">2 (≤40 results)</option>
+          <option value="3" selected>3 (≤60 results)</option>
+          <option value="10">10</option>
+          <option value="15">15</option>
+          <option value="20">20</option>
+        </select>
+        <p class="mt-1 text-xs text-stone-400">Google returns at most 3 pages (~60 results) per query; higher values stop early.</p>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-stone-700 mb-1">Language <span class="text-stone-400">(optional)</span></label>
+        <input name="language" type="text" placeholder="en" maxlength="8"
+               class="w-full rounded-md border-gray-300 border px-3 py-2 focus:border-amber-400 focus:ring-amber-400">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-stone-700 mb-1">Region <span class="text-stone-400">(optional)</span></label>
+        <input name="region" type="text" placeholder="us" maxlength="8"
+               class="w-full rounded-md border-gray-300 border px-3 py-2 focus:border-amber-400 focus:ring-amber-400">
+      </div>
+    </div>
+
+    <!-- Auto-expand -->
+    <div class="rounded-lg border border-amber-200 bg-amber-50/60 p-4" x-data="{ expand: false }">
+      <label class="flex items-start gap-3 cursor-pointer">
+        <input type="checkbox" name="auto_expand" value="1" x-model="expand"
+               class="mt-0.5 rounded border-gray-300 text-amber-500 focus:ring-amber-400">
+        <span class="text-sm">
+          <span class="font-medium text-stone-800">🔄 Auto-expand each location</span>
+          <span class="block text-stone-500">
+            Runs {{ expansion_count }} coffee-related query variants per location (deduped by Place ID)
+            to get well past Google’s ~60-results-per-query cap.
+          </span>
+          <span class="block mt-1 text-xs text-amber-700" x-show="expand">
+            ≈ {{ expansion_count }} × your locations searches — more leads, but more billed API calls.
+          </span>
+        </span>
+      </label>
+    </div>
+
+    <div class="flex items-center justify-between border-t border-gray-100 pt-4">
+      <p class="text-xs text-stone-400">Tip: each location × query × page is a billed Google API call.</p>
+      <button type="submit" class="rounded-md bg-amber-500 px-5 py-2.5 text-sm font-semibold text-stone-900 hover:bg-amber-400">
+        Queue search →
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

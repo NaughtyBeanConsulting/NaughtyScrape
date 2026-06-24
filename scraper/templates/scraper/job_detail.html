@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% load scraper_extras %}
+{% block title %}Job #{{ job.pk }} · NaughtyScrape{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+  <div class="mb-4">
+    <a href="{% url 'scraper:jobs' %}" class="text-sm text-stone-500 hover:underline">← All jobs</a>
+  </div>
+
+  <div class="flex items-start justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-stone-900">{{ job.query|default:job.get_kind_display }}</h1>
+      <p class="text-sm text-stone-500">
+        {{ job.get_kind_display }}
+        {% if job.locations %} · {{ job.locations|length }} location(s){% endif %}
+        {% if job.language %} · lang {{ job.language }}{% endif %}
+        {% if job.region %} · region {{ job.region }}{% endif %}
+        · up to {{ job.max_pages }} page(s)/location
+        {% if job.auto_expand %} · 🔄 auto-expand ×{{ job.query_variants|length }} queries{% endif %}
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      {% if job.is_active and is_app_admin %}
+      <form method="post" action="{% url 'scraper:job_cancel' job.pk %}">
+        {% csrf_token %}
+        <button class="rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm text-rose-700 hover:bg-rose-100">Cancel</button>
+      </form>
+      {% endif %}
+      <a href="{% url 'scraper:leads' %}?sort=-first_seen" class="rounded-md bg-stone-800 px-3 py-1.5 text-sm text-white hover:bg-stone-700">View leads →</a>
+    </div>
+  </div>
+
+  {% include "scraper/partials/_job_progress.html" %}
+</div>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% load scraper_extras %}
+<div id="job-progress"
+     {% if job.is_active %}hx-get="{% url 'scraper:job_progress' job.pk %}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+
+  <div class="rounded-xl bg-white p-6 shadow-sm border border-gray-100">
+    <div class="flex items-center justify-between mb-3">
+      <span class="rounded-full px-3 py-1 text-sm font-medium {{ job.status|job_status_classes }}">
+        {% if job.is_active %}<span class="inline-block h-2 w-2 rounded-full bg-current animate-pulse mr-1"></span>{% endif %}
+        {{ job.get_status_display }}
+      </span>
+      <span class="text-sm text-stone-500">{{ job.processed }} / {{ job.total }} · {{ job.progress_percent }}%</span>
+    </div>
+
+    <div class="h-3 rounded-full bg-gray-100 overflow-hidden">
+      <div class="h-full rounded-full transition-all duration-500 {% if job.status == 'failed' %}bg-rose-400{% elif job.status == 'done' %}bg-emerald-400{% else %}bg-amber-400{% endif %}"
+           style="width: {{ job.progress_percent }}%"></div>
+    </div>
+
+    <div class="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+      <div class="rounded-lg bg-stone-50 p-3">
+        <div class="text-2xl font-bold text-stone-900">{{ job.results_found }}</div>
+        <div class="text-xs text-stone-500">found</div>
+      </div>
+      <div class="rounded-lg bg-emerald-50 p-3">
+        <div class="text-2xl font-bold text-emerald-600">{{ job.new_count }}</div>
+        <div class="text-xs text-stone-500">{% if job.kind == 'enrich' %}emails{% else %}new{% endif %}</div>
+      </div>
+      <div class="rounded-lg bg-stone-50 p-3">
+        <div class="text-2xl font-bold text-stone-900">{{ job.updated_count }}</div>
+        <div class="text-xs text-stone-500">updated</div>
+      </div>
+      <div class="rounded-lg {% if job.error_count %}bg-rose-50{% else %}bg-stone-50{% endif %} p-3">
+        <div class="text-2xl font-bold {% if job.error_count %}text-rose-600{% else %}text-stone-900{% endif %}">{{ job.error_count }}</div>
+        <div class="text-xs text-stone-500">errors</div>
+      </div>
+    </div>
+
+    {% if job.error %}
+      <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{{ job.error }}</div>
+    {% endif %}
+  </div>
+
+  <!-- Log -->
+  <div class="mt-5 rounded-xl bg-stone-900 text-stone-100 p-4 shadow-sm">
+    <div class="text-xs uppercase tracking-wide text-stone-400 mb-2">Activity log</div>
+    <div class="font-mono text-xs space-y-1 max-h-80 overflow-auto">
+      {% for entry in job.recent_log %}
+        <div class="flex gap-2">
+          <span class="text-stone-500 shrink-0">{{ entry.ts }}</span>
+          <span class="{% if entry.level == 'error' %}text-rose-400{% elif entry.level == 'warning' %}text-amber-400{% else %}text-stone-200{% endif %}">{{ entry.msg }}</span>
+        </div>
+      {% empty %}
+        <div class="text-stone-500">No log entries yet…</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>

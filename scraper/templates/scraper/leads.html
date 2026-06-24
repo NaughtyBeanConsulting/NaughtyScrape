@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Leads · NaughtyScrape{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <div>
+    <h1 class="text-2xl font-bold text-stone-900">Leads</h1>
+    <p class="text-sm text-stone-500">{{ total_matched }} matching</p>
+  </div>
+  {% if is_app_admin %}
+  <div class="flex items-center gap-2">
+    <form method="post" action="{% url 'scraper:leads_enrich' %}"
+          onsubmit="return confirm('Queue website enrichment for ALL leads with a website that are not yet enriched?')">
+      {% csrf_token %}
+      <button class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm hover:bg-stone-50">✨ Enrich all</button>
+    </form>
+    <a href="{% url 'scraper:search' %}" class="rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-stone-900 hover:bg-amber-400">+ New search</a>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Filters -->
+<form id="filter-form"
+      hx-get="{% url 'scraper:leads_table' %}"
+      hx-target="#leads-table"
+      hx-swap="innerHTML"
+      hx-push-url="true"
+      hx-trigger="change, keyup delay:400ms from:input[name='q']"
+      class="mb-4 grid grid-cols-2 md:grid-cols-6 gap-3 rounded-xl bg-white p-4 shadow-sm border border-gray-100">
+  <input name="q" value="{{ filters.q }}" placeholder="Search name / address / site…"
+         class="col-span-2 md:col-span-2 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-400 focus:ring-amber-400">
+  <select name="status" class="rounded-md border border-gray-300 px-2 py-2 text-sm">
+    <option value="">All statuses</option>
+    {% for val, label in lead_statuses %}
+      <option value="{{ val }}" {% if filters.status == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="enrichment" class="rounded-md border border-gray-300 px-2 py-2 text-sm">
+    <option value="">All enrichment</option>
+    {% for val, label in enrichment_statuses %}
+      <option value="{{ val }}" {% if filters.enrichment == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="country" class="rounded-md border border-gray-300 px-2 py-2 text-sm">
+    <option value="">All countries</option>
+    {% for c in countries %}
+      <option value="{{ c }}" {% if filters.country == c %}selected{% endif %}>{{ c }}</option>
+    {% endfor %}
+  </select>
+  <select name="sort" class="rounded-md border border-gray-300 px-2 py-2 text-sm">
+    <option value="-first_seen" {% if filters.sort == '-first_seen' %}selected{% endif %}>Newest</option>
+    <option value="name" {% if filters.sort == 'name' %}selected{% endif %}>Name A–Z</option>
+    <option value="-rating" {% if filters.sort == '-rating' %}selected{% endif %}>Top rated</option>
+    <option value="-user_ratings_total" {% if filters.sort == '-user_ratings_total' %}selected{% endif %}>Most reviews</option>
+  </select>
+  <label class="flex items-center gap-2 text-sm text-stone-600">
+    <input type="checkbox" name="has_email" value="1" {% if filters.has_email == '1' %}checked{% endif %} class="rounded border-gray-300 text-amber-500 focus:ring-amber-400"> Has email
+  </label>
+  <label class="flex items-center gap-2 text-sm text-stone-600">
+    <input type="checkbox" name="has_website" value="1" {% if filters.has_website == '1' %}checked{% endif %} class="rounded border-gray-300 text-amber-500 focus:ring-amber-400"> Has website
+  </label>
+</form>
+
+<!-- Results (htmx-swapped) wrapped in the bulk-enrich form -->
+<form id="bulk-form" method="post" action="{% url 'scraper:leads_enrich' %}">
+  {% csrf_token %}
+  <div id="leads-table">
+    {% include "scraper/partials/_leads_table.html" %}
+  </div>
+</form>
+{% endblock %}
