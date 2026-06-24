@@ -83,6 +83,19 @@ Jobs (searches + enrichment) run in the background.
   ./.venv/bin/python manage.py runworker --once     # drain queue and exit
   ```
 
+## Production static files
+
+For production deployments, use the production settings module and collect static
+assets before starting Gunicorn:
+
+```bash
+DJANGO_SETTINGS_MODULE=app.settings.production ./.venv/bin/python manage.py collectstatic --noinput
+```
+
+`app.settings.production` serves static assets through WhiteNoise using
+compressed manifest storage, so missing or stale static files should be fixed by
+rerunning `collectstatic` during deploy.
+
 ## How searching works (important)
 
 - Google caps a single query at **~60 results** (3 pages of 20). To cover the
