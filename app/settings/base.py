@@ -158,3 +158,19 @@ SCRAPE_USER_AGENT = env(
 # web process so `runserver` alone can process jobs. Set to False and run
 # `python manage.py runworker` in a separate terminal for heavy batch crawls.
 RUN_INPROCESS_WORKER = env_bool("RUN_INPROCESS_WORKER", DEBUG)
+
+# ---------------------------------------------------------------------------
+# Sentry (error monitoring) — only initialised when SENTRY_DSN is set.
+# The Django integration is auto-enabled by sentry-sdk.
+# ---------------------------------------------------------------------------
+SENTRY_DSN = env("SENTRY_DSN", "")
+if SENTRY_DSN:
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        # Send request headers and IP for users. See:
+        # https://docs.sentry.io/platforms/python/data-management/data-collected/
+        send_default_pii=True,
+        environment="development" if DEBUG else "production",
+    )
