@@ -3,6 +3,7 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 from django.utils import timezone
+from django.utils.text import slugify
 
 
 class Role(models.TextChoices):
@@ -89,6 +90,30 @@ class EnrichmentStatus(models.TextChoices):
     DONE = "done", "Enriched"
     FAILED = "failed", "Failed"
     NO_WEBSITE = "no_website", "No website"
+
+
+class ActivityType(models.TextChoices):
+    """Kinds of timeline entry recorded against a lead."""
+
+    NOTE = "note", "Note"
+    CALL = "call", "Call"
+    EMAIL = "email", "Email"
+    WHATSAPP = "whatsapp", "WhatsApp"
+    MEETING = "meeting", "Meeting"
+    STATUS = "status", "Status change"
+    ASSIGNMENT = "assignment", "Assignment"
+    TAG = "tag", "Tag"
+    TASK = "task", "Task"
+    CONTACT = "contact", "Contact"
+    SYSTEM = "system", "System"
+
+
+# Manually-logged outreach touches (vs. system-generated bookkeeping entries).
+# Used to decide what counts as "contact" and to power the timeline composer.
+CONTACT_ACTIVITY_TYPES = (
+    ActivityType.CALL, ActivityType.EMAIL, ActivityType.WHATSAPP, ActivityType.MEETING,
+)
+COMPOSER_ACTIVITY_TYPES = (ActivityType.NOTE,) + CONTACT_ACTIVITY_TYPES
 
 
 # Statuses that mean a job is no longer claimable / still in flight.
@@ -233,8 +258,18 @@ class Business(models.Model):
     status = models.CharField(
         max_length=16, choices=LeadStatus.choices, default=LeadStatus.NEW, db_index=True
     )
+    # Legacy free-text notes. Superseded by the Activity timeline — existing
+    # content was migrated into a note Activity. Kept for backwards reference.
     notes = models.TextField(blank=True)
     contacted_at = models.DateTimeField(null=True, blank=True)
+
+    # --- CRM ownership / labels ---
+    assigned_to = models.ForeignKey(
+        "User", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="assigned_leads", db_index=True,
+    )
+    tags = models.ManyToManyField("Tag", blank=True, related_name="businesses")
+    last_activity_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     # --- bookkeeping ---
     source_query = models.CharField(max_length=255, blank=True)
@@ -251,6 +286,7 @@ class Business(models.Model):
             models.Index(fields=["status"]),
             models.Index(fields=["enrichment_status"]),
             models.Index(fields=["country"]),
+            models.Index(fields=["assigned_to", "status"]),
         ]
 
     def __str__(self):
@@ -267,3 +303,167 @@ class Business(models.Model):
     @property
     def primary_email(self):
         return self.emails[0] if self.emails else ""
+
+    @property
+    def has_phone(self):
+        return bool(self.international_phone or self.national_phone)
+
+    @property
+    def best_phone(self):
+        return self.international_phone or self.national_phone
+
+    @property
+    def is_contactable(self):
+        """Has at least one way to reach out."""
+        return self.has_email or self.has_phone
+
+    @property
+    def is_ready_to_contact(self):
+        """A fresh, reachable lead that no one has worked yet."""
+        return self.status == LeadStatus.NEW and self.is_contactable
+
+
+# Tailwind colour names that have ready-made badge classes safelisted for tags.
+TAG_COLORS = [
+    "stone", "amber", "sky", "emerald", "violet", "rose", "blue", "teal",
+]
+
+
+class Tag(models.Model):
+    """A free-form label that can be applied to many leads."""
+
+    name = models.CharField(max_length=64, unique=True)
+    slug = models.SlugField(max_length=80, unique=True, blank=True)
+    color = models.CharField(max_length=16, default="stone")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = slugify(self.name)[:80] or "tag"
+            slug, n = base, 2
+            while Tag.objects.exclude(pk=self.pk).filter(slug=slug).exists():
+                slug = f"{base[:76]}-{n}"
+                n += 1
+            self.slug = slug
+        super().save(*args, **kwargs)
+
+
+class Contact(models.Model):
+    """A named person at a lead business — who you actually talk to."""
+
+    business = models.ForeignKey(
+        Business, on_delete=models.CASCADE, related_name="contacts"
+    )
+    name = models.CharField(max_length=255)
+    title = models.CharField(max_length=128, blank=True)
+    email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=64, blank=True)
+    is_primary = models.BooleanField(default=False)
+    note = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        "User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-is_primary", "name"]
+
+    def __str__(self):
+        return self.name
+
+
+class Activity(models.Model):
+    """A single timeline entry against a lead (note, call, status change…)."""
+
+    business = models.ForeignKey(
+        Business, on_delete=models.CASCADE, related_name="activities"
+    )
+    user = models.ForeignKey(
+        "User", null=True, blank=True, on_delete=models.SET_NULL, related_name="activities"
+    )
+    kind = models.CharField(
+        max_length=16, choices=ActivityType.choices,
+        default=ActivityType.NOTE, db_index=True,
+    )
+    body = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name_plural = "activities"
+
+    def __str__(self):
+        return f"{self.get_kind_display()} on {self.business_id}"
+
+    @property
+    def is_touch(self):
+        """True for manually-logged outreach (counts as contacting the lead)."""
+        return self.kind in CONTACT_ACTIVITY_TYPES
+
+
+class Task(models.Model):
+    """A follow-up / to-do attached to a lead, with an optional due date."""
+
+    business = models.ForeignKey(
+        Business, on_delete=models.CASCADE, related_name="tasks"
+    )
+    title = models.CharField(max_length=255)
+    assigned_to = models.ForeignKey(
+        "User", null=True, blank=True, on_delete=models.SET_NULL, related_name="tasks"
+    )
+    created_by = models.ForeignKey(
+        "User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    due_date = models.DateField(null=True, blank=True, db_index=True)
+    is_done = models.BooleanField(default=False, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["is_done", models.F("due_date").asc(nulls_last=True), "-created_at"]
+
+    def __str__(self):
+        return self.title
+
+    @property
+    def is_overdue(self):
+        return bool(
+            not self.is_done and self.due_date and self.due_date < timezone.localdate()
+        )
+
+    @property
+    def is_due_today(self):
+        return bool(not self.is_done and self.due_date == timezone.localdate())
+
+
+class LeadAssignment(models.Model):
+    """Audit log of who a lead was handed to, and by whom.
+
+    ``Business.assigned_to`` holds the *current* owner for fast filtering;
+    this model keeps the full history of hand-offs.
+    """
+
+    business = models.ForeignKey(
+        Business, on_delete=models.CASCADE, related_name="assignments"
+    )
+    user = models.ForeignKey(
+        "User", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="lead_assignments",
+    )
+    assigned_by = models.ForeignKey(
+        "User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.business_id} → {self.user_id or 'unassigned'}"

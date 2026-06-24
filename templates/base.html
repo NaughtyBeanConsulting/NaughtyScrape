@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}NaughtyScrape{% endblock %}</title>
   <link rel="stylesheet" href="{% static 'css/tailwind.css' %}">
+  <style>[x-cloak]{display:none !important;}</style>
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☕</text></svg>">
@@ -22,13 +23,17 @@
           {% if request.user.is_authenticated %}
           <div class="hidden sm:flex items-center gap-1 text-sm">
             {% url 'scraper:dashboard' as u_dash %}
+            {% url 'scraper:work' as u_work %}
             {% url 'scraper:search' as u_search %}
             {% url 'scraper:leads' as u_leads %}
+            {% url 'scraper:tasks' as u_tasks %}
             {% url 'scraper:jobs' as u_jobs %}
             {% url 'scraper:team' as u_team %}
             <a href="{{ u_dash }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if request.path == u_dash %}bg-stone-700{% endif %}">Dashboard</a>
-            {% if is_app_admin %}<a href="{{ u_search }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if request.path == u_search %}bg-stone-700{% endif %}">New search</a>{% endif %}
+            <a href="{{ u_work }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_work in request.path %}bg-stone-700{% endif %}">My work{% if nav_my_due_count %} <span class="ml-1 rounded-full bg-rose-500 px-1.5 text-[11px] font-semibold text-white">{{ nav_my_due_count }}</span>{% endif %}</a>
             <a href="{{ u_leads }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_leads in request.path %}bg-stone-700{% endif %}">Leads</a>
+            <a href="{{ u_tasks }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_tasks in request.path %}bg-stone-700{% endif %}">Tasks</a>
+            {% if is_app_admin %}<a href="{{ u_search }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if request.path == u_search %}bg-stone-700{% endif %}">Search</a>{% endif %}
             <a href="{{ u_jobs }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_jobs in request.path %}bg-stone-700{% endif %}">Jobs</a>
             {% if is_app_admin %}<a href="{{ u_team }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_team in request.path %}bg-stone-700{% endif %}">Team</a>{% endif %}
           </div>

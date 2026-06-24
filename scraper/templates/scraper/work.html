@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% load scraper_extras %}
+{% block title %}My work · NaughtyScrape{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold text-stone-900">My work</h1>
+  <p class="text-sm text-stone-500">Your daily queue — {{ request.user.get_full_name|default:request.user.email }}</p>
+</div>
+
+<!-- Headline counters -->
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+  <a href="{% url 'scraper:leads' %}?view=mine" class="rounded-xl bg-white p-5 shadow-sm border border-gray-100 hover:border-amber-200">
+    <div class="text-sm text-stone-500">My leads</div>
+    <div class="mt-1 text-3xl font-bold text-stone-900">{{ my_leads_count }}</div>
+  </a>
+  <a href="{% url 'scraper:tasks' %}?scope=mine&state=today" class="rounded-xl bg-white p-5 shadow-sm border border-gray-100 hover:border-amber-200">
+    <div class="text-sm text-stone-500">Due today</div>
+    <div class="mt-1 text-3xl font-bold text-amber-600">{{ due_today|length }}</div>
+  </a>
+  <a href="{% url 'scraper:tasks' %}?scope=mine&state=overdue" class="rounded-xl bg-white p-5 shadow-sm border border-gray-100 hover:border-rose-200">
+    <div class="text-sm text-stone-500">Overdue</div>
+    <div class="mt-1 text-3xl font-bold text-rose-600">{{ overdue|length }}</div>
+  </a>
+  <a href="{% url 'scraper:leads' %}?view=ready" class="rounded-xl bg-white p-5 shadow-sm border border-gray-100 hover:border-emerald-200">
+    <div class="text-sm text-stone-500">Ready to contact</div>
+    <div class="mt-1 text-3xl font-bold text-emerald-600">{{ ready_count }}</div>
+  </a>
+</div>
+
+<div class="grid lg:grid-cols-2 gap-6">
+  <!-- Tasks column -->
+  <div class="space-y-6">
+    {% if overdue %}
+    <div class="rounded-xl bg-white p-5 shadow-sm border border-rose-100">
+      <h2 class="font-semibold text-rose-700 mb-3">⚠ Overdue ({{ overdue|length }})</h2>
+      {% for t in overdue %}{% include "scraper/partials/_task_row.html" with t=t next=request.path %}{% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+      <h2 class="font-semibold text-stone-900 mb-3">Due today ({{ due_today|length }})</h2>
+      {% for t in due_today %}{% include "scraper/partials/_task_row.html" with t=t next=request.path %}{% empty %}
+        <p class="text-sm text-stone-400">Nothing due today. 🎉</p>
+      {% endfor %}
+    </div>
+
+    {% if no_due_date %}
+    <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+      <h2 class="font-semibold text-stone-900 mb-3">No due date</h2>
+      {% for t in no_due_date %}{% include "scraper/partials/_task_row.html" with t=t next=request.path %}{% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Leads column -->
+  <div class="space-y-6">
+    <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold text-stone-900">Ready to contact</h2>
+        <a href="{% url 'scraper:leads' %}?view=ready" class="text-xs text-amber-700 hover:underline">See all →</a>
+      </div>
+      {% for b in ready %}
+      <a href="{% url 'scraper:lead_detail' b.pk %}" class="block rounded-lg border border-gray-100 hover:border-emerald-200 p-3 mb-2">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm font-medium text-stone-800 truncate">{{ b.name }}</span>
+          <span class="text-xs text-stone-400">{{ b.country }}</span>
+        </div>
+        <div class="mt-0.5 text-xs text-stone-500 flex flex-wrap gap-2">
+          {% if b.best_phone %}<span>📞 {{ b.best_phone }}</span>{% endif %}
+          {% if b.emails %}<span class="text-emerald-700">✉ {{ b.primary_email }}</span>{% endif %}
+          {% if not b.assigned_to %}<span class="text-amber-600">unassigned</span>{% endif %}
+        </div>
+      </a>
+      {% empty %}
+      <p class="text-sm text-stone-400">No fresh, reachable leads right now.</p>
+      {% endfor %}
+    </div>
+
+    {% if recent_my_leads %}
+    <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold text-stone-900">My recent leads</h2>
+        <a href="{% url 'scraper:leads' %}?view=mine" class="text-xs text-amber-700 hover:underline">All mine →</a>
+      </div>
+      {% for b in recent_my_leads %}
+      <a href="{% url 'scraper:lead_detail' b.pk %}" class="flex items-center justify-between gap-2 rounded-lg border border-gray-100 hover:border-amber-200 p-3 mb-2">
+        <span class="text-sm font-medium text-stone-800 truncate">{{ b.name }}</span>
+        <span class="rounded-full px-2 py-0.5 text-xs font-medium {{ b.status|lead_status_classes }}">{{ b.get_status_display }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

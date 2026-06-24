@@ -1,5 +1,5 @@
 {% load scraper_extras %}
-<div x-data="{ selected: [] }">
+<div x-data="{ selected: [], action: 'assign' }">
   <!-- Toolbar -->
   <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
     <div class="text-sm text-stone-500">
@@ -8,7 +8,8 @@
     </div>
     <div class="flex items-center gap-2">
       {% if is_app_admin %}
-      <button type="submit" form="bulk-form" x-bind:disabled="selected.length === 0"
+      <button type="submit" form="bulk-form" formaction="{% url 'scraper:leads_enrich' %}"
+              x-bind:disabled="selected.length === 0"
               class="rounded-md bg-stone-800 px-3 py-1.5 text-sm text-white hover:bg-stone-700 disabled:opacity-40">
         ✨ Enrich selected
       </button>
@@ -16,6 +17,56 @@
       <a href="{% url 'scraper:leads_export' %}{% if querystring %}?{{ querystring }}{% endif %}"
          class="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm hover:bg-stone-50">⬇ Export CSV</a>
     </div>
+  </div>
+
+  <!-- Bulk action bar (shows once rows are selected) -->
+  <div x-show="selected.length" x-cloak
+       class="mb-3 flex flex-wrap items-end gap-2 rounded-xl border border-stone-200 bg-stone-50 p-3">
+    <div class="text-sm font-medium text-stone-700 self-center">
+      <span x-text="selected.length"></span> selected:
+    </div>
+    <select name="action" form="bulk-form" x-model="action"
+            class="rounded-md border border-gray-300 px-2 py-1.5 text-sm">
+      <option value="assign">Assign to…</option>
+      <option value="status">Set status…</option>
+      <option value="tag">Add tag…</option>
+      <option value="task">Create task…</option>
+    </select>
+
+    <!-- assign -->
+    <select name="assignee" form="bulk-form" x-show="action === 'assign' || action === 'task'"
+            class="rounded-md border border-gray-300 px-2 py-1.5 text-sm">
+      <option value="">Unassigned</option>
+      <option value="me">Me</option>
+      {% for m in team_members %}<option value="{{ m.pk }}">{{ m.get_full_name|default:m.email }}</option>{% endfor %}
+    </select>
+
+    <!-- status -->
+    <select name="status" form="bulk-form" x-show="action === 'status'"
+            class="rounded-md border border-gray-300 px-2 py-1.5 text-sm">
+      {% for val, label in lead_statuses %}<option value="{{ val }}">{{ label }}</option>{% endfor %}
+    </select>
+
+    <!-- tag -->
+    <select name="tag" form="bulk-form" x-show="action === 'tag'"
+            class="rounded-md border border-gray-300 px-2 py-1.5 text-sm">
+      {% for t in tags %}<option value="{{ t.pk }}">{{ t.name }}</option>{% empty %}<option value="">No tags yet</option>{% endfor %}
+    </select>
+
+    <!-- task -->
+    <template x-if="action === 'task'">
+      <span class="flex flex-wrap items-end gap-2">
+        <input name="task_title" form="bulk-form" placeholder="Task title"
+               class="rounded-md border border-gray-300 px-3 py-1.5 text-sm">
+        <input name="due_date" form="bulk-form" type="date"
+               class="rounded-md border border-gray-300 px-2 py-1.5 text-sm">
+      </span>
+    </template>
+
+    <button type="submit" form="bulk-form"
+            class="rounded-md bg-amber-500 px-4 py-1.5 text-sm font-medium text-stone-900 hover:bg-amber-400">
+      Apply to <span x-text="selected.length"></span>
+    </button>
   </div>
 
   <div class="overflow-x-auto rounded-xl bg-white shadow-sm border border-gray-100">
@@ -27,10 +78,10 @@
                    @change="selected = $event.target.checked ? Array.from($root.querySelectorAll('input[name=ids]')).map(c => c.value) : []">
           </th>
           <th class="px-3 py-3 text-left font-medium">Business</th>
-          <th class="px-3 py-3 text-left font-medium">Location</th>
+          <th class="px-3 py-3 text-left font-medium">Owner</th>
           <th class="px-3 py-3 text-left font-medium">Contact</th>
-          <th class="px-3 py-3 text-right font-medium">Rating</th>
           <th class="px-3 py-3 text-left font-medium">Status</th>
+          <th class="px-3 py-3 text-left font-medium">Activity</th>
           <th class="px-3 py-3"></th>
         </tr>
       </thead>
@@ -43,17 +94,25 @@
           </td>
           <td class="px-3 py-3 align-top">
             <a href="{% url 'scraper:lead_detail' b.pk %}" class="font-medium text-stone-900 hover:text-amber-700">{{ b.name }}</a>
-            <div class="text-xs text-stone-400 truncate max-w-xs">{{ b.formatted_address }}</div>
-            {% if b.primary_type %}<div class="text-[11px] text-stone-400">{{ b.primary_type }}</div>{% endif %}
+            <div class="text-xs text-stone-400 truncate max-w-xs">{{ b.country|default:b.formatted_address }}</div>
+            {% if b.tags.all %}
+            <div class="mt-1 flex flex-wrap gap-1">
+              {% for tag in b.tags.all %}<span class="rounded-full px-1.5 py-0.5 text-[10px] {{ tag.color|tag_color_classes }}">{{ tag.name }}</span>{% endfor %}
+            </div>
+            {% endif %}
           </td>
-          <td class="px-3 py-3 align-top text-stone-600">
-            {{ b.country|default:"—" }}
+          <td class="px-3 py-3 align-top">
+            {% if b.assigned_to %}
+              <span class="inline-flex items-center gap-1.5 text-xs text-stone-600" title="{{ b.assigned_to.email }}">
+                <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-stone-200 text-[10px] font-semibold text-stone-600">{{ b.assigned_to|initials }}</span>
+              </span>
+            {% else %}
+              <span class="text-xs text-stone-300">—</span>
+            {% endif %}
           </td>
           <td class="px-3 py-3 align-top">
             <div class="space-y-0.5 text-xs">
-              {% with phone=b.international_phone|default:b.national_phone %}
-                {% if phone %}<div class="text-stone-600">📞 {{ phone }}</div>{% endif %}
-              {% endwith %}
+              {% if b.best_phone %}<div class="text-stone-600">📞 {{ b.best_phone }}</div>{% endif %}
               {% if b.website %}<div><a href="{{ b.website }}" target="_blank" rel="noopener" class="text-sky-600 hover:underline">🌐 website</a></div>{% endif %}
               {% if b.emails %}
                 <div class="text-emerald-700">✉ {{ b.primary_email }}{% if b.emails|length > 1 %} +{{ b.emails|length|add:"-1" }}{% endif %}</div>
@@ -62,11 +121,11 @@
               {% endif %}
             </div>
           </td>
-          <td class="px-3 py-3 align-top text-right text-stone-700">
-            {% if b.rating %}{{ b.rating }} <span class="text-amber-400">★</span><div class="text-[11px] text-stone-400">{{ b.user_ratings_total }} rev</div>{% else %}<span class="text-stone-300">—</span>{% endif %}
-          </td>
           <td class="px-3 py-3 align-top">
             {% include "scraper/partials/_status_control.html" with lead=b %}
+          </td>
+          <td class="px-3 py-3 align-top text-xs text-stone-500">
+            {% if b.last_activity_at %}{{ b.last_activity_at|timesince }} ago{% else %}<span class="text-stone-300">—</span>{% endif %}
           </td>
           <td class="px-3 py-3 align-top text-right">
             <a href="{% url 'scraper:lead_detail' b.pk %}" class="text-stone-400 hover:text-amber-600">→</a>

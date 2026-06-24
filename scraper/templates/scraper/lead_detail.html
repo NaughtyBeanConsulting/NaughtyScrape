@@ -3,7 +3,7 @@
 {% block title %}{{ lead.name }} · NaughtyScrape{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto">
+<div class="max-w-5xl mx-auto">
   <div class="mb-4">
     <a href="{% url 'scraper:leads' %}" class="text-sm text-stone-500 hover:underline">← Leads</a>
   </div>
@@ -12,23 +12,30 @@
     <div>
       <h1 class="text-2xl font-bold text-stone-900">{{ lead.name }}</h1>
       <p class="text-sm text-stone-500">{{ lead.formatted_address }}</p>
-      <div class="mt-2 flex items-center gap-2 text-sm">
+      <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
         {% if lead.rating %}<span class="text-stone-700">{{ lead.rating }} <span class="text-amber-400">★</span> · {{ lead.user_ratings_total }} reviews</span>{% endif %}
         {% if lead.business_status %}<span class="rounded-full bg-stone-100 px-2 py-0.5 text-xs">{{ lead.business_status }}</span>{% endif %}
+        {% for tag in lead.tags.all %}
+          <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs {{ tag.color|tag_color_classes }}">
+            {{ tag.name }}
+            <form method="post" action="{% url 'scraper:lead_remove_tag' lead.pk tag.pk %}" class="inline">{% csrf_token %}<button class="opacity-60 hover:opacity-100" title="Remove tag">×</button></form>
+          </span>
+        {% endfor %}
       </div>
     </div>
     <div class="shrink-0">{% include "scraper/partials/_status_control.html" with lead=lead %}</div>
   </div>
 
   <div class="grid md:grid-cols-3 gap-6">
-    <!-- Contact + meta -->
+    <!-- Main column -->
     <div class="md:col-span-2 space-y-6">
+      <!-- Contact (Google-sourced) -->
       <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
-        <h2 class="font-semibold text-stone-900 mb-3">Contact</h2>
+        <h2 class="font-semibold text-stone-900 mb-3">Business details</h2>
         <dl class="grid sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
           <div>
             <dt class="text-stone-400">Phone</dt>
-            <dd class="text-stone-800">{{ lead.international_phone|default:lead.national_phone|default:"—" }}</dd>
+            <dd class="text-stone-800">{{ lead.best_phone|default:"—" }}</dd>
           </div>
           <div>
             <dt class="text-stone-400">Website</dt>
@@ -70,22 +77,212 @@
         {% endif %}
       </div>
 
-      <!-- Notes -->
+      <!-- People / contacts -->
       <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="font-semibold text-stone-900">Notes</h2>
-          <span id="notes-status" class="text-xs"></span>
-        </div>
-        <form hx-post="{% url 'scraper:lead_notes' lead.pk %}" hx-target="#notes-status" hx-swap="innerHTML">
-          <textarea name="notes" rows="5" placeholder="Outreach notes, contact attempts, fit…"
-                    class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-400 focus:ring-amber-400">{{ lead.notes }}</textarea>
-          <button class="mt-2 rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-stone-900 hover:bg-amber-400">Save notes</button>
+        <h2 class="font-semibold text-stone-900 mb-3">People</h2>
+        {% if contacts %}
+          <ul class="divide-y divide-gray-50 mb-4">
+            {% for c in contacts %}
+            <li class="py-2 flex items-start justify-between gap-3">
+              <div>
+                <div class="text-sm font-medium text-stone-800">
+                  {{ c.name }}
+                  {% if c.is_primary %}<span class="ml-1 rounded-full bg-amber-100 text-amber-700 px-1.5 py-0.5 text-[10px]">primary</span>{% endif %}
+                </div>
+                {% if c.title %}<div class="text-xs text-stone-500">{{ c.title }}</div>{% endif %}
+                <div class="text-xs text-stone-600 flex flex-wrap gap-3 mt-0.5">
+                  {% if c.email %}<a href="mailto:{{ c.email }}" class="text-sky-600 hover:underline">{{ c.email }}</a>{% endif %}
+                  {% if c.phone %}<span>{{ c.phone }}</span>{% endif %}
+                </div>
+                {% if c.note %}<div class="text-xs text-stone-400 mt-0.5">{{ c.note }}</div>{% endif %}
+              </div>
+              <form method="post" action="{% url 'scraper:lead_delete_contact' lead.pk c.pk %}"
+                    onsubmit="return confirm('Remove {{ c.name|escapejs }}?')">
+                {% csrf_token %}
+                <button class="text-stone-300 hover:text-rose-500 text-sm" title="Remove">✕</button>
+              </form>
+            </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="text-sm text-stone-400 mb-4">No named contacts yet — add the person you talk to.</p>
+        {% endif %}
+
+        <details class="group">
+          <summary class="cursor-pointer text-sm text-amber-700 hover:underline list-none">+ Add a contact</summary>
+          <form method="post" action="{% url 'scraper:lead_add_contact' lead.pk %}" class="mt-3 grid grid-cols-2 gap-2">
+            {% csrf_token %}
+            <div>{{ contact_form.name }}</div>
+            <div>{{ contact_form.title }}</div>
+            <div>{{ contact_form.email }}</div>
+            <div>{{ contact_form.phone }}</div>
+            <div class="col-span-2">{{ contact_form.note }}</div>
+            <label class="col-span-2 flex items-center gap-2 text-xs text-stone-600">
+              {{ contact_form.is_primary }} Mark as primary contact
+            </label>
+            <div class="col-span-2">
+              <button class="rounded-md bg-stone-800 px-3 py-1.5 text-sm text-white hover:bg-stone-700">Add contact</button>
+            </div>
+          </form>
+        </details>
+      </div>
+
+      <!-- Timeline -->
+      <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+        <h2 class="font-semibold text-stone-900 mb-3">Timeline</h2>
+
+        <!-- Composer -->
+        <form method="post" action="{% url 'scraper:lead_activity' lead.pk %}" class="mb-5"
+              x-data="{ kind: 'note' }">
+          {% csrf_token %}
+          <div class="flex flex-wrap gap-1.5 mb-2">
+            {% for val, label in composer_types %}
+              <label class="cursor-pointer">
+                <input type="radio" name="kind" value="{{ val }}" class="sr-only peer" x-model="kind" {% if forloop.first %}checked{% endif %}>
+                <span class="inline-block rounded-full border border-stone-200 px-3 py-1 text-xs peer-checked:bg-stone-800 peer-checked:text-white peer-checked:border-stone-800">{{ val|activity_icon }} {{ label }}</span>
+              </label>
+            {% endfor %}
+          </div>
+          <textarea name="body" rows="3" required
+                    placeholder="Log a call, note an outcome, record an email…"
+                    class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-400 focus:ring-amber-400"></textarea>
+          <div class="mt-2 text-right">
+            <button class="rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-stone-900 hover:bg-amber-400">Log to timeline</button>
+          </div>
         </form>
+
+        <!-- Entries -->
+        {% if activities %}
+        <ol class="relative border-l border-stone-100 ml-2 space-y-4">
+          {% for a in activities %}
+          <li class="ml-4">
+            <span class="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full ring-4 ring-white {{ a.kind|activity_dot_classes }}"></span>
+            <div class="flex items-center gap-2 text-xs text-stone-400">
+              <span>{{ a.kind|activity_icon }} {{ a.get_kind_display }}</span>
+              <span>·</span>
+              <span title="{{ a.created_at|date:'j M Y, H:i' }}">{{ a.created_at|timesince }} ago</span>
+              {% if a.user %}<span>·</span><span>{{ a.user.get_full_name|default:a.user.email }}</span>{% endif %}
+            </div>
+            {% if a.body %}<div class="text-sm text-stone-800 whitespace-pre-line mt-0.5">{{ a.body }}</div>{% endif %}
+          </li>
+          {% endfor %}
+        </ol>
+        {% else %}
+        <p class="text-sm text-stone-400">Nothing logged yet.</p>
+        {% endif %}
       </div>
     </div>
 
-    <!-- Meta sidebar -->
+    <!-- Sidebar -->
     <div class="space-y-4">
+      <!-- Ownership -->
+      <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100 text-sm">
+        <h2 class="font-semibold text-stone-900 mb-3">Owner</h2>
+        <form method="post" action="{% url 'scraper:lead_assign' lead.pk %}">
+          {% csrf_token %}
+          <select name="assignee" onchange="this.form.submit()"
+                  class="w-full rounded-md border border-gray-300 px-2 py-2 text-sm">
+            <option value="" {% if not lead.assigned_to %}selected{% endif %}>Unassigned</option>
+            {% for m in team_members %}
+              <option value="{{ m.pk }}" {% if lead.assigned_to_id == m.pk %}selected{% endif %}>{{ m.get_full_name|default:m.email }}</option>
+            {% endfor %}
+          </select>
+          <noscript><button class="mt-2 rounded-md bg-stone-800 px-3 py-1.5 text-white text-xs">Assign</button></noscript>
+        </form>
+        {% if lead.assigned_to_id != request.user.pk %}
+        <form method="post" action="{% url 'scraper:lead_assign' lead.pk %}" class="mt-2">
+          {% csrf_token %}
+          <input type="hidden" name="assignee" value="me">
+          <button class="text-xs text-amber-700 hover:underline">Assign to me</button>
+        </form>
+        {% endif %}
+      </div>
+
+      <!-- Tags -->
+      <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100 text-sm">
+        <h2 class="font-semibold text-stone-900 mb-3">Tags</h2>
+        {% if lead.tags.all %}
+          <div class="flex flex-wrap gap-1.5 mb-3">
+            {% for tag in lead.tags.all %}
+              <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs {{ tag.color|tag_color_classes }}">
+                {{ tag.name }}
+                <form method="post" action="{% url 'scraper:lead_remove_tag' lead.pk tag.pk %}" class="inline">{% csrf_token %}<button class="opacity-60 hover:opacity-100">×</button></form>
+              </span>
+            {% endfor %}
+          </div>
+        {% endif %}
+        {% if all_tags %}
+        <form method="post" action="{% url 'scraper:lead_add_tag' lead.pk %}" class="flex gap-2">
+          {% csrf_token %}
+          <select name="tag" class="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm">
+            {% for tag in all_tags %}<option value="{{ tag.pk }}">{{ tag.name }}</option>{% endfor %}
+          </select>
+          <button class="rounded-md bg-stone-800 px-3 py-1.5 text-white text-xs">Add</button>
+        </form>
+        {% else %}
+          <p class="text-xs text-stone-400">No tags yet.{% if is_app_admin %} Create some on the Leads page.{% endif %}</p>
+        {% endif %}
+      </div>
+
+      <!-- Tasks -->
+      <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100 text-sm">
+        <h2 class="font-semibold text-stone-900 mb-3">Tasks</h2>
+        {% if open_tasks %}
+          <ul class="space-y-2 mb-3">
+            {% for t in open_tasks %}
+            <li class="flex items-start gap-2">
+              <form method="post" action="{% url 'scraper:task_toggle' t.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="done" value="1">
+                <input type="hidden" name="next" value="{{ request.path }}">
+                <button class="mt-0.5 h-4 w-4 rounded border border-stone-300 hover:border-emerald-500" title="Mark done"></button>
+              </form>
+              <div class="flex-1">
+                <div class="text-stone-800">{{ t.title }}</div>
+                <div class="text-xs {% if t.is_overdue %}text-rose-600 font-medium{% else %}text-stone-400{% endif %}">
+                  {% if t.due_date %}{% if t.is_overdue %}Overdue · {% endif %}due {{ t.due_date|date:"j M" }}{% else %}No due date{% endif %}
+                  {% if t.assigned_to %} · {{ t.assigned_to.get_full_name|default:t.assigned_to.email }}{% endif %}
+                </div>
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="text-xs text-stone-400 mb-3">No open tasks.</p>
+        {% endif %}
+
+        <details>
+          <summary class="cursor-pointer text-sm text-amber-700 hover:underline list-none">+ Add a task</summary>
+          <form method="post" action="{% url 'scraper:lead_add_task' lead.pk %}" class="mt-3 space-y-2">
+            {% csrf_token %}
+            {{ task_form.title }}
+            {{ task_form.assigned_to }}
+            {{ task_form.due_date }}
+            <button class="w-full rounded-md bg-stone-800 px-3 py-1.5 text-sm text-white hover:bg-stone-700">Add task</button>
+          </form>
+        </details>
+
+        {% if done_tasks %}
+        <div class="mt-3 pt-3 border-t border-gray-50">
+          <div class="text-xs text-stone-400 mb-1">Recently completed</div>
+          <ul class="space-y-1">
+            {% for t in done_tasks %}
+            <li class="flex items-center justify-between text-xs text-stone-400">
+              <span class="line-through">{{ t.title }}</span>
+              <form method="post" action="{% url 'scraper:task_toggle' t.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="done" value="0">
+                <input type="hidden" name="next" value="{{ request.path }}">
+                <button class="hover:text-amber-600">reopen</button>
+              </form>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- Meta -->
       <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100 text-sm space-y-3">
         <div>
           <div class="text-stone-400 text-xs">Source query</div>
@@ -95,21 +292,13 @@
           <div class="text-stone-400 text-xs">Primary type</div>
           <div class="text-stone-800">{{ lead.primary_type|default:"—" }}</div>
         </div>
-        {% if lead.types %}
-        <div>
-          <div class="text-stone-400 text-xs">Types</div>
-          <div class="flex flex-wrap gap-1 mt-1">
-            {% for t in lead.types %}<span class="rounded bg-stone-100 px-1.5 py-0.5 text-[11px] text-stone-600">{{ t }}</span>{% endfor %}
-          </div>
-        </div>
-        {% endif %}
         <div>
           <div class="text-stone-400 text-xs">First seen</div>
           <div class="text-stone-800">{{ lead.first_seen|date:"j M Y, H:i" }}</div>
         </div>
         {% if lead.contacted_at %}
         <div>
-          <div class="text-stone-400 text-xs">Contacted</div>
+          <div class="text-stone-400 text-xs">First contacted</div>
           <div class="text-stone-800">{{ lead.contacted_at|date:"j M Y, H:i" }}</div>
         </div>
         {% endif %}

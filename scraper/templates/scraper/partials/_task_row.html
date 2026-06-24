@@ -1,0 +1,18 @@
+{% comment %}A single task line: complete checkbox + title + lead link + due. Expects `t` and `next`.{% endcomment %}
+<div class="flex items-start gap-3 py-2 border-b border-gray-50 last:border-0">
+  <form method="post" action="{% url 'scraper:task_toggle' t.pk %}">
+    {% csrf_token %}
+    <input type="hidden" name="done" value="1">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="mt-0.5 h-4 w-4 rounded border border-stone-300 hover:border-emerald-500 hover:bg-emerald-50" title="Mark done"></button>
+  </form>
+  <div class="flex-1 min-w-0">
+    <div class="text-sm text-stone-800">{{ t.title }}</div>
+    <div class="text-xs text-stone-500 flex flex-wrap gap-2">
+      <a href="{% url 'scraper:lead_detail' t.business.pk %}" class="hover:text-amber-700 truncate">{{ t.business.name }}</a>
+      {% if t.due_date %}
+        <span class="{% if t.is_overdue %}text-rose-600 font-medium{% endif %}">{% if t.is_overdue %}overdue · {% endif %}due {{ t.due_date|date:"j M" }}</span>
+      {% endif %}
+    </div>
+  </div>
+</div>

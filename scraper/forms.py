@@ -8,12 +8,13 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import AuthenticationForm
 
-from .models import Role
+from .models import Contact, Role, Tag, Task
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
 _INPUT = "w-full rounded-md border border-gray-300 px-3 py-2 focus:border-amber-400 focus:ring-amber-400"
+_INPUT_SM = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-400 focus:ring-amber-400"
 
 
 class EmailLoginForm(AuthenticationForm):
@@ -110,3 +111,66 @@ class NewUserForm(forms.Form):
             last_name=last,
             role=data["role"],
         )
+
+
+def active_member_queryset():
+    return User.objects.filter(is_active=True).order_by("first_name", "email")
+
+
+class ContactForm(forms.ModelForm):
+    """Add/edit a person at a lead business."""
+
+    class Meta:
+        model = Contact
+        fields = ["name", "title", "email", "phone", "is_primary", "note"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": _INPUT_SM, "placeholder": "Full name"}),
+            "title": forms.TextInput(attrs={"class": _INPUT_SM, "placeholder": "Role (e.g. Owner)"}),
+            "email": forms.EmailInput(attrs={"class": _INPUT_SM, "placeholder": "email@…"}),
+            "phone": forms.TextInput(attrs={"class": _INPUT_SM, "placeholder": "Phone"}),
+            "note": forms.TextInput(attrs={"class": _INPUT_SM, "placeholder": "Optional note"}),
+        }
+
+
+class TaskForm(forms.ModelForm):
+    """Create a follow-up task against a lead."""
+
+    class Meta:
+        model = Task
+        fields = ["title", "assigned_to", "due_date"]
+        widgets = {
+            "title": forms.TextInput(attrs={"class": _INPUT_SM, "placeholder": "e.g. Call back about pricing"}),
+            "assigned_to": forms.Select(attrs={"class": _INPUT_SM}),
+            "due_date": forms.DateInput(attrs={"class": _INPUT_SM, "type": "date"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["assigned_to"].queryset = active_member_queryset()
+        self.fields["assigned_to"].required = False
+        self.fields["assigned_to"].empty_label = "Unassigned"
+
+
+class TagForm(forms.ModelForm):
+    """Create a tag (admin)."""
+
+    class Meta:
+        model = Tag
+        fields = ["name", "color"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": _INPUT_SM, "placeholder": "Tag name"}),
+            "color": forms.Select(attrs={"class": _INPUT_SM}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from .models import TAG_COLORS
+        self.fields["color"].widget = forms.Select(
+            attrs={"class": _INPUT_SM}, choices=[(c, c.title()) for c in TAG_COLORS]
+        )
+
+    def clean_name(self):
+        name = self.cleaned_data["name"].strip()
+        if Tag.objects.filter(name__iexact=name).exists():
+            raise forms.ValidationError("A tag with that name already exists.")
+        return name

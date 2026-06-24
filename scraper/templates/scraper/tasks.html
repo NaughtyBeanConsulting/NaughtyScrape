@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% load scraper_extras %}
+{% block title %}Tasks · NaughtyScrape{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <div>
+    <h1 class="text-2xl font-bold text-stone-900">Tasks</h1>
+    <p class="text-sm text-stone-500">{{ total_matched }} matching</p>
+  </div>
+</div>
+
+<!-- Filters -->
+<form method="get" class="mb-4 flex flex-wrap gap-3 rounded-xl bg-white p-4 shadow-sm border border-gray-100">
+  <select name="scope" onchange="this.form.submit()" class="rounded-md border border-gray-300 px-2 py-2 text-sm">
+    <option value="mine" {% if scope == 'mine' %}selected{% endif %}>My tasks</option>
+    <option value="all" {% if scope == 'all' %}selected{% endif %}>Everyone</option>
+    <option value="unassigned" {% if scope == 'unassigned' %}selected{% endif %}>Unassigned</option>
+    {% for m in team_members %}
+      <option value="{{ m.pk }}" {% if scope == m.pk|stringformat:'s' %}selected{% endif %}>{{ m.get_full_name|default:m.email }}</option>
+    {% endfor %}
+  </select>
+  <select name="state" onchange="this.form.submit()" class="rounded-md border border-gray-300 px-2 py-2 text-sm">
+    <option value="open" {% if state == 'open' %}selected{% endif %}>Open</option>
+    <option value="overdue" {% if state == 'overdue' %}selected{% endif %}>Overdue</option>
+    <option value="today" {% if state == 'today' %}selected{% endif %}>Due today</option>
+    <option value="upcoming" {% if state == 'upcoming' %}selected{% endif %}>Upcoming</option>
+    <option value="done" {% if state == 'done' %}selected{% endif %}>Completed</option>
+  </select>
+</form>
+
+<div class="rounded-xl bg-white shadow-sm border border-gray-100 divide-y divide-gray-50">
+  {% for t in page %}
+  <div class="flex items-start gap-3 px-4 py-3">
+    <form method="post" action="{% url 'scraper:task_toggle' t.pk %}">
+      {% csrf_token %}
+      <input type="hidden" name="done" value="{% if t.is_done %}0{% else %}1{% endif %}">
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      {% if t.is_done %}
+        <button class="mt-0.5 flex h-4 w-4 items-center justify-center rounded border border-emerald-500 bg-emerald-500 text-[10px] text-white" title="Reopen">✓</button>
+      {% else %}
+        <button class="mt-0.5 h-4 w-4 rounded border border-stone-300 hover:border-emerald-500 hover:bg-emerald-50" title="Mark done"></button>
+      {% endif %}
+    </form>
+    <div class="flex-1 min-w-0">
+      <div class="text-sm {% if t.is_done %}text-stone-400 line-through{% else %}text-stone-800{% endif %}">{{ t.title }}</div>
+      <div class="text-xs text-stone-500 flex flex-wrap gap-2 mt-0.5">
+        <a href="{% url 'scraper:lead_detail' t.business.pk %}" class="hover:text-amber-700">{{ t.business.name }}</a>
+        {% if t.assigned_to %}<span>· {{ t.assigned_to.get_full_name|default:t.assigned_to.email }}</span>{% endif %}
+        {% if t.due_date %}<span class="{% if t.is_overdue %}text-rose-600 font-medium{% endif %}">· {% if t.is_overdue %}overdue · {% endif %}due {{ t.due_date|date:"j M Y" }}</span>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% empty %}
+  <div class="px-4 py-12 text-center text-stone-400">No tasks here.</div>
+  {% endfor %}
+</div>
+
+{% if page.paginator.num_pages > 1 %}
+<div class="mt-4 flex items-center justify-center gap-2 text-sm">
+  {% if page.has_previous %}<a href="?scope={{ scope }}&state={{ state }}&page={{ page.previous_page_number }}" class="rounded border px-3 py-1 hover:bg-stone-50">← Prev</a>{% endif %}
+  <span class="text-stone-500">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}<a href="?scope={{ scope }}&state={{ state }}&page={{ page.next_page_number }}" class="rounded border px-3 py-1 hover:bg-stone-50">Next →</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

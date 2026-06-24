@@ -8,7 +8,7 @@ module.exports = {
   ],
   // Belt-and-braces: keep status-badge colour classes even if scanning misses them.
   safelist: [
-    { pattern: /(bg|text)-(sky|amber|violet|emerald|rose|gray|blue|stone)-(50|100|200|400|500|600|700)/ },
+    { pattern: /(bg|text)-(sky|amber|violet|emerald|rose|gray|blue|stone|teal|indigo|fuchsia)-(50|100|200|300|400|500|600|700)/ },
   ],
   theme: {
     extend: {},
