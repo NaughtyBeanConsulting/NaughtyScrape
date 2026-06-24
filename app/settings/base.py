@@ -46,6 +46,18 @@ ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", ["localhost", "127.0.0.1"])
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
 SITE_URL = env("SITE_URL", "http://localhost:8000")
 
+TURNSTILE_SITE_KEY = env("TURNSTILE_SITE_KEY", "")
+TURNSTILE_SECRET_KEY = env("TURNSTILE_SECRET_KEY", "")
+TURNSTILE_VERIFY_URL = env(
+    "TURNSTILE_VERIFY_URL",
+    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+)
+TURNSTILE_TIMEOUT = float(env("TURNSTILE_TIMEOUT", "5"))
+TURNSTILE_ENABLED = env_bool(
+    "TURNSTILE_ENABLED",
+    bool(TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY),
+)
+
 INSTALLED_APPS = [
     # Listed first so its `createsuperuser` overrides django.contrib.auth's
     # (Django resolves command name clashes in favour of the earliest app).

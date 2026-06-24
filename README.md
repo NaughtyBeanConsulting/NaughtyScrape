@@ -115,6 +115,9 @@ rerunning `collectstatic` during deploy.
 | `SCRAPE_REQUEST_DELAY`  | polite delay (s) between outbound requests         |
 | `SCRAPE_HTTP_TIMEOUT`   | outbound HTTP timeout (s)                          |
 | `RUN_INPROCESS_WORKER`  | start the worker thread inside `runserver`         |
+| `TURNSTILE_SITE_KEY`    | Cloudflare Turnstile site key for the login page   |
+| `TURNSTILE_SECRET_KEY`  | Cloudflare Turnstile secret key for server verify  |
+| `TURNSTILE_ENABLED`     | optional override; defaults to enabled when both Turnstile keys exist |
 
 ## Project layout
 

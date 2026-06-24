@@ -2,6 +2,10 @@
 {% block title %}Sign in · NaughtyScrape{% endblock %}
 
 {% block content %}
+{% if form.turnstile_enabled %}
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+{% endif %}
+
 <div class="min-h-[70vh] flex items-center justify-center">
   <div class="w-full max-w-sm">
     <div class="text-center mb-6">
@@ -30,6 +34,10 @@
         {{ form.password }}
         {% for err in form.password.errors %}<p class="mt-1 text-xs text-rose-600">{{ err }}</p>{% endfor %}
       </div>
+
+      {% if form.turnstile_enabled %}
+        <div class="cf-turnstile" data-sitekey="{{ form.turnstile_site_key }}"></div>
+      {% endif %}
 
       <button type="submit" class="w-full rounded-md bg-amber-500 px-4 py-2.5 text-sm font-semibold text-stone-900 hover:bg-amber-400">
         Sign in
