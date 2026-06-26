@@ -62,6 +62,66 @@ class User(AbstractUser):
         return self.is_superuser or self.role == Role.ADMIN
 
 
+class Workspace(models.Model):
+    """A self-contained sales funnel — e.g. one per product being sold.
+
+    Every workspace draws leads from the same shared ``Business`` pool, but each
+    keeps its own per-lead funnel state (see ``WorkspaceLead``), its own tags,
+    timeline and tasks, worked by its own set of members.
+    """
+
+    name = models.CharField(max_length=120)
+    slug = models.SlugField(max_length=140, unique=True, blank=True)
+    description = models.CharField(max_length=255, blank=True)
+    is_default = models.BooleanField(default=False)
+    created_by = models.ForeignKey(
+        "User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    members = models.ManyToManyField(
+        "User", through="WorkspaceMembership",
+        through_fields=("workspace", "user"), related_name="workspaces",
+    )
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = slugify(self.name)[:140] or "workspace"
+            slug, n = base, 2
+            while Workspace.objects.exclude(pk=self.pk).filter(slug=slug).exists():
+                slug = f"{base[:136]}-{n}"
+                n += 1
+            self.slug = slug
+        super().save(*args, **kwargs)
+
+
+class WorkspaceMembership(models.Model):
+    """Flat membership: a user belongs to a workspace and can work it fully."""
+
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, related_name="memberships"
+    )
+    user = models.ForeignKey(
+        "User", on_delete=models.CASCADE, related_name="workspace_memberships"
+    )
+    added_by = models.ForeignKey(
+        "User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    joined_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("workspace", "user")]
+        ordering = ["user__first_name", "user__email"]
+
+    def __str__(self):
+        return f"{self.user_id} in {self.workspace_id}"
+
+
 class JobKind(models.TextChoices):
     SEARCH = "search", "Places search"
     ENRICH = "enrich", "Website enrichment"
@@ -216,8 +276,38 @@ class CrawlJob(models.Model):
         return list(reversed(self.log or []))[:60]
 
 
+class BusinessQuerySet(models.QuerySet):
+    """Business queries that overlay a single workspace's funnel state.
+
+    The funnel state (status / owner / tags / last activity) lives on
+    ``WorkspaceLead`` and is created lazily, so a business may have no row for
+    the active workspace — those read as New / unassigned via a LEFT-join-style
+    Subquery (null) and the ``effective_*`` properties below.
+    """
+
+    def with_workspace_state(self, workspace):
+        wl = WorkspaceLead.objects.filter(
+            workspace=workspace, business=models.OuterRef("pk")
+        )
+        return self.annotate(
+            ws_status=models.Subquery(wl.values("status")[:1]),
+            ws_assigned_to_id=models.Subquery(wl.values("assigned_to_id")[:1]),
+            ws_last_activity_at=models.Subquery(wl.values("last_activity_at")[:1]),
+        ).prefetch_related(
+            models.Prefetch(
+                "workspace_leads",
+                queryset=WorkspaceLead.objects.filter(workspace=workspace)
+                .select_related("assigned_to")
+                .prefetch_related("tags"),
+                to_attr="_ws_list",
+            )
+        )
+
+
 class Business(models.Model):
-    """A scraped coffee shop / business — the B2B lead."""
+    """A scraped coffee shop / business — the B2B lead (shared across workspaces)."""
+
+    objects = BusinessQuerySet.as_manager()
 
     # Identity (Google Place ID is stable and our dedupe key).
     place_id = models.CharField(max_length=255, unique=True)
@@ -255,21 +345,11 @@ class Business(models.Model):
     enriched_at = models.DateTimeField(null=True, blank=True)
 
     # --- lead pipeline ---
-    status = models.CharField(
-        max_length=16, choices=LeadStatus.choices, default=LeadStatus.NEW, db_index=True
-    )
+    # Funnel state (status / owner / tags / timeline timestamps) is per-workspace
+    # and lives on ``WorkspaceLead`` — see that model and ``with_workspace_state``.
     # Legacy free-text notes. Superseded by the Activity timeline — existing
     # content was migrated into a note Activity. Kept for backwards reference.
     notes = models.TextField(blank=True)
-    contacted_at = models.DateTimeField(null=True, blank=True)
-
-    # --- CRM ownership / labels ---
-    assigned_to = models.ForeignKey(
-        "User", null=True, blank=True, on_delete=models.SET_NULL,
-        related_name="assigned_leads", db_index=True,
-    )
-    tags = models.ManyToManyField("Tag", blank=True, related_name="businesses")
-    last_activity_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     # --- bookkeeping ---
     source_query = models.CharField(max_length=255, blank=True)
@@ -283,14 +363,46 @@ class Business(models.Model):
         ordering = ["-first_seen"]
         verbose_name_plural = "businesses"
         indexes = [
-            models.Index(fields=["status"]),
             models.Index(fields=["enrichment_status"]),
             models.Index(fields=["country"]),
-            models.Index(fields=["assigned_to", "status"]),
         ]
 
     def __str__(self):
         return self.name
+
+    # -- per-workspace funnel state (populated by with_workspace_state) --------
+    @property
+    def ws_lead(self):
+        """The prefetched WorkspaceLead for the active workspace, or None.
+
+        ``None`` means the lead is untouched in this workspace (lazy state).
+        """
+        leads = getattr(self, "_ws_list", None)
+        return leads[0] if leads else None
+
+    @property
+    def effective_status(self):
+        wl = self.ws_lead
+        return wl.status if wl else LeadStatus.NEW
+
+    @property
+    def effective_status_display(self):
+        return dict(LeadStatus.choices).get(self.effective_status, self.effective_status)
+
+    @property
+    def effective_assignee(self):
+        wl = self.ws_lead
+        return wl.assigned_to if wl else None
+
+    @property
+    def effective_tags(self):
+        wl = self.ws_lead
+        return wl.tags.all() if wl else Tag.objects.none()
+
+    @property
+    def effective_last_activity_at(self):
+        wl = self.ws_lead
+        return wl.last_activity_at if wl else None
 
     @property
     def has_website(self):
@@ -317,11 +429,6 @@ class Business(models.Model):
         """Has at least one way to reach out."""
         return self.has_email or self.has_phone
 
-    @property
-    def is_ready_to_contact(self):
-        """A fresh, reachable lead that no one has worked yet."""
-        return self.status == LeadStatus.NEW and self.is_contactable
-
 
 # Tailwind colour names that have ready-made badge classes safelisted for tags.
 TAG_COLORS = [
@@ -330,15 +437,19 @@ TAG_COLORS = [
 
 
 class Tag(models.Model):
-    """A free-form label that can be applied to many leads."""
+    """A free-form label that can be applied to many leads, scoped to a workspace."""
 
-    name = models.CharField(max_length=64, unique=True)
-    slug = models.SlugField(max_length=80, unique=True, blank=True)
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, related_name="tags"
+    )
+    name = models.CharField(max_length=64)
+    slug = models.SlugField(max_length=80, blank=True)
     color = models.CharField(max_length=16, default="stone")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["name"]
+        unique_together = [("workspace", "name"), ("workspace", "slug")]
 
     def __str__(self):
         return self.name
@@ -347,11 +458,57 @@ class Tag(models.Model):
         if not self.slug:
             base = slugify(self.name)[:80] or "tag"
             slug, n = base, 2
-            while Tag.objects.exclude(pk=self.pk).filter(slug=slug).exists():
+            while (
+                Tag.objects.exclude(pk=self.pk)
+                .filter(workspace=self.workspace, slug=slug)
+                .exists()
+            ):
                 slug = f"{base[:76]}-{n}"
                 n += 1
             self.slug = slug
         super().save(*args, **kwargs)
+
+
+class WorkspaceLead(models.Model):
+    """One workspace's funnel state for one shared Business — created lazily.
+
+    A ``(workspace, business)`` pair carries the per-product pipeline: status,
+    owner, tags, and the timeline timestamps. The same Business can be
+    "Contacted" in one workspace and "New" in another.
+    """
+
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, related_name="leads"
+    )
+    business = models.ForeignKey(
+        Business, on_delete=models.CASCADE, related_name="workspace_leads"
+    )
+    status = models.CharField(
+        max_length=16, choices=LeadStatus.choices, default=LeadStatus.NEW, db_index=True
+    )
+    assigned_to = models.ForeignKey(
+        "User", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="assigned_leads",
+    )
+    tags = models.ManyToManyField(Tag, blank=True, related_name="leads")
+    contacted_at = models.DateTimeField(null=True, blank=True)
+    last_activity_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("workspace", "business")]
+        indexes = [
+            models.Index(fields=["workspace", "status"], name="ws_lead_ws_status_idx"),
+            models.Index(fields=["workspace", "assigned_to"], name="ws_lead_ws_assignee_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.business_id}@{self.workspace_id} ({self.status})"
+
+    @property
+    def is_ready_to_contact(self):
+        """A fresh, reachable lead that no one in this workspace has worked yet."""
+        return self.status == LeadStatus.NEW and self.business.is_contactable
 
 
 class Contact(models.Model):
@@ -381,6 +538,9 @@ class Contact(models.Model):
 class Activity(models.Model):
     """A single timeline entry against a lead (note, call, status change…)."""
 
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, related_name="activities"
+    )
     business = models.ForeignKey(
         Business, on_delete=models.CASCADE, related_name="activities"
     )
@@ -411,6 +571,9 @@ class Activity(models.Model):
 class Task(models.Model):
     """A follow-up / to-do attached to a lead, with an optional due date."""
 
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, related_name="tasks"
+    )
     business = models.ForeignKey(
         Business, on_delete=models.CASCADE, related_name="tasks"
     )
@@ -446,10 +609,13 @@ class Task(models.Model):
 class LeadAssignment(models.Model):
     """Audit log of who a lead was handed to, and by whom.
 
-    ``Business.assigned_to`` holds the *current* owner for fast filtering;
-    this model keeps the full history of hand-offs.
+    ``WorkspaceLead.assigned_to`` holds the *current* owner for fast filtering;
+    this model keeps the full history of hand-offs within a workspace.
     """
 
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, related_name="lead_assignments"
+    )
     business = models.ForeignKey(
         Business, on_delete=models.CASCADE, related_name="assignments"
     )

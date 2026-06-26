@@ -13,8 +13,8 @@ from scraper.models import (
 from scraper.services import enrichment, places
 
 # Google-sourced fields we refresh on every sighting. Deliberately excludes
-# lead-pipeline fields (status, notes) and enrichment fields so re-scraping a
-# place never clobbers manual work.
+# the legacy ``notes`` field and enrichment fields (and per-workspace funnel
+# state lives on WorkspaceLead) so re-scraping a place never clobbers manual work.
 _GOOGLE_FIELDS = (
     "name", "formatted_address", "latitude", "longitude", "national_phone",
     "international_phone", "website", "google_maps_uri", "rating",

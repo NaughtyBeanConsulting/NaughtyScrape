@@ -10,6 +10,9 @@ from .models import (
     Tag,
     Task,
     User,
+    Workspace,
+    WorkspaceLead,
+    WorkspaceMembership,
 )
 
 
@@ -46,9 +49,9 @@ class CrawlJobAdmin(admin.ModelAdmin):
 
 @admin.register(Business)
 class BusinessAdmin(admin.ModelAdmin):
-    list_display = ("name", "country", "status", "enrichment_status",
+    list_display = ("name", "country", "enrichment_status",
                     "primary_email", "phone_display", "rating", "first_seen")
-    list_filter = ("status", "enrichment_status", "country")
+    list_filter = ("enrichment_status", "country")
     search_fields = ("name", "formatted_address", "website")
     readonly_fields = ("place_id", "first_seen", "last_updated")
 
@@ -57,11 +60,35 @@ class BusinessAdmin(admin.ModelAdmin):
         return obj.international_phone or obj.national_phone
 
 
+class WorkspaceMembershipInline(admin.TabularInline):
+    model = WorkspaceMembership
+    extra = 0
+    raw_id_fields = ("user", "added_by")
+    fk_name = "workspace"
+
+
+@admin.register(Workspace)
+class WorkspaceAdmin(admin.ModelAdmin):
+    list_display = ("name", "slug", "is_default", "created_at")
+    list_filter = ("is_default",)
+    search_fields = ("name", "slug")
+    prepopulated_fields = {"slug": ("name",)}
+    inlines = [WorkspaceMembershipInline]
+
+
+@admin.register(WorkspaceLead)
+class WorkspaceLeadAdmin(admin.ModelAdmin):
+    list_display = ("id", "workspace", "business", "status", "assigned_to", "last_activity_at")
+    list_filter = ("workspace", "status")
+    search_fields = ("business__name",)
+    raw_id_fields = ("business", "assigned_to")
+
+
 @admin.register(Tag)
 class TagAdmin(admin.ModelAdmin):
-    list_display = ("name", "slug", "color", "created_at")
+    list_display = ("name", "workspace", "slug", "color", "created_at")
+    list_filter = ("workspace",)
     search_fields = ("name",)
-    prepopulated_fields = {"slug": ("name",)}
 
 
 @admin.register(Contact)
@@ -74,8 +101,8 @@ class ContactAdmin(admin.ModelAdmin):
 
 @admin.register(Activity)
 class ActivityAdmin(admin.ModelAdmin):
-    list_display = ("id", "business", "kind", "user", "created_at")
-    list_filter = ("kind",)
+    list_display = ("id", "workspace", "business", "kind", "user", "created_at")
+    list_filter = ("workspace", "kind")
     search_fields = ("body", "business__name")
     raw_id_fields = ("business", "user")
     readonly_fields = ("created_at",)
@@ -83,15 +110,16 @@ class ActivityAdmin(admin.ModelAdmin):
 
 @admin.register(Task)
 class TaskAdmin(admin.ModelAdmin):
-    list_display = ("title", "business", "assigned_to", "due_date", "is_done")
-    list_filter = ("is_done",)
+    list_display = ("title", "workspace", "business", "assigned_to", "due_date", "is_done")
+    list_filter = ("workspace", "is_done")
     search_fields = ("title", "business__name")
     raw_id_fields = ("business", "assigned_to", "created_by")
 
 
 @admin.register(LeadAssignment)
 class LeadAssignmentAdmin(admin.ModelAdmin):
-    list_display = ("id", "business", "user", "assigned_by", "created_at")
+    list_display = ("id", "workspace", "business", "user", "assigned_by", "created_at")
+    list_filter = ("workspace",)
     search_fields = ("business__name",)
     raw_id_fields = ("business", "user", "assigned_by")
     readonly_fields = ("created_at",)

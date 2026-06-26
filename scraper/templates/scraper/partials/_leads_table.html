@@ -95,16 +95,18 @@
           <td class="px-3 py-3 align-top">
             <a href="{% url 'scraper:lead_detail' b.pk %}" class="font-medium text-stone-900 hover:text-amber-700">{{ b.name }}</a>
             <div class="text-xs text-stone-400 truncate max-w-xs">{{ b.country|default:b.formatted_address }}</div>
-            {% if b.tags.all %}
+            {% with ws_tags=b.effective_tags %}
+            {% if ws_tags %}
             <div class="mt-1 flex flex-wrap gap-1">
-              {% for tag in b.tags.all %}<span class="rounded-full px-1.5 py-0.5 text-[10px] {{ tag.color|tag_color_classes }}">{{ tag.name }}</span>{% endfor %}
+              {% for tag in ws_tags %}<span class="rounded-full px-1.5 py-0.5 text-[10px] {{ tag.color|tag_color_classes }}">{{ tag.name }}</span>{% endfor %}
             </div>
             {% endif %}
+            {% endwith %}
           </td>
           <td class="px-3 py-3 align-top">
-            {% if b.assigned_to %}
-              <span class="inline-flex items-center gap-1.5 text-xs text-stone-600" title="{{ b.assigned_to.email }}">
-                <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-stone-200 text-[10px] font-semibold text-stone-600">{{ b.assigned_to|initials }}</span>
+            {% if b.effective_assignee %}
+              <span class="inline-flex items-center gap-1.5 text-xs text-stone-600" title="{{ b.effective_assignee.email }}">
+                <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-stone-200 text-[10px] font-semibold text-stone-600">{{ b.effective_assignee|initials }}</span>
               </span>
             {% else %}
               <span class="text-xs text-stone-300">—</span>
@@ -122,10 +124,10 @@
             </div>
           </td>
           <td class="px-3 py-3 align-top">
-            {% include "scraper/partials/_status_control.html" with lead=b %}
+            {% include "scraper/partials/_status_control.html" with lead=b status=b.effective_status %}
           </td>
           <td class="px-3 py-3 align-top text-xs text-stone-500">
-            {% if b.last_activity_at %}{{ b.last_activity_at|timesince }} ago{% else %}<span class="text-stone-300">—</span>{% endif %}
+            {% if b.effective_last_activity_at %}{{ b.effective_last_activity_at|timesince }} ago{% else %}<span class="text-stone-300">—</span>{% endif %}
           </td>
           <td class="px-3 py-3 align-top text-right">
             <a href="{% url 'scraper:lead_detail' b.pk %}" class="text-stone-400 hover:text-amber-600">→</a>

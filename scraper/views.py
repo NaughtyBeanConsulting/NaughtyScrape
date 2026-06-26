@@ -1,4 +1,10 @@
-"""Views for the NaughtyScrape lead scraper UI (htmx + Alpine + Tailwind)."""
+"""Views for the NaughtyScrape lead scraper UI (htmx + Alpine + Tailwind).
+
+Funnel pages are scoped to the *active workspace* (``request.workspace``, set by
+``workspace_member_required``). The shared ``Business`` pool is global; each
+workspace overlays its own funnel state via ``WorkspaceLead`` — see
+``Business.with_workspace_state`` and ``services/crm.py``.
+"""
 
 import csv
 
@@ -16,8 +22,9 @@ from django.views.decorators.http import require_POST
 
 from .access import admin_required
 from .constants import EXPANSION_QUERIES, QUERY_PRESETS, SEED_CITIES
-from .forms import ContactForm, NewUserForm, TagForm, TaskForm, active_member_queryset
+from .forms import ContactForm, NewUserForm, TagForm, TaskForm
 from .models import (
+    Activity,
     Business,
     COMPOSER_ACTIVITY_TYPES,
     Contact,
@@ -29,14 +36,21 @@ from .models import (
     Tag,
     TAG_COLORS,
     Task,
+    Workspace,
+    WorkspaceLead,
+    WorkspaceMembership,
 )
 from .services import crawler, crm
+from .workspaces import (
+    can_access,
+    get_active_workspace,
+    user_workspaces,
+    workspace_member_required,
+    workspace_members,
+    SESSION_KEY,
+)
 
 PAGE_SIZE = 25
-
-
-def _team_members():
-    return list(active_member_queryset())
 
 
 def _parse_due_date(raw):
@@ -51,10 +65,10 @@ def _parse_due_date(raw):
 
 
 # ---------------------------------------------------------------------------
-# Lead filtering (shared by list, htmx table, and CSV export)
+# Lead filtering (shared by list, htmx table, and CSV export) — workspace-scoped
 # ---------------------------------------------------------------------------
-def filter_leads(request):
-    qs = Business.objects.all()
+def filter_leads(request, workspace):
+    qs = Business.objects.with_workspace_state(workspace)
     params = request.GET
 
     q = params.get("q", "").strip()
@@ -67,9 +81,13 @@ def filter_leads(request):
             | Q(contacts__email__icontains=q)
         ).distinct()
 
+    # --- per-workspace status (untouched leads read as New / null) ---
     status = params.get("status", "").strip()
     if status:
-        qs = qs.filter(status=status)
+        if status == LeadStatus.NEW:
+            qs = qs.filter(Q(ws_status=LeadStatus.NEW) | Q(ws_status__isnull=True))
+        else:
+            qs = qs.filter(ws_status=status)
 
     enrichment = params.get("enrichment", "").strip()
     if enrichment:
@@ -79,31 +97,35 @@ def filter_leads(request):
     if country:
         qs = qs.filter(country=country)
 
-    # --- CRM: ownership ---
+    # --- CRM: ownership (per workspace) ---
     assigned = params.get("assigned", "").strip()
     if assigned == "me" and request.user.is_authenticated:
-        qs = qs.filter(assigned_to=request.user)
+        qs = qs.filter(ws_assigned_to_id=request.user.pk)
     elif assigned == "none":
-        qs = qs.filter(assigned_to__isnull=True)
+        qs = qs.filter(ws_assigned_to_id__isnull=True)
     elif assigned.isdigit():
-        qs = qs.filter(assigned_to_id=int(assigned))
+        qs = qs.filter(ws_assigned_to_id=int(assigned))
 
-    # --- CRM: tag ---
+    # --- CRM: tag (per workspace) ---
     tag = params.get("tag", "").strip()
     if tag:
-        qs = qs.filter(tags__slug=tag)
+        qs = qs.filter(
+            workspace_leads__workspace=workspace, workspace_leads__tags__slug=tag
+        ).distinct()
 
     # --- CRM: quick work-queue views ---
     view = params.get("view", "").strip()
     if view == "mine" and request.user.is_authenticated:
-        qs = qs.filter(assigned_to=request.user)
+        qs = qs.filter(ws_assigned_to_id=request.user.pk)
     elif view == "ready":
-        # Fresh + reachable + not already someone else's job.
-        qs = qs.filter(status=LeadStatus.NEW).filter(
+        # Fresh (New/untouched) + reachable + not already someone else's job.
+        qs = qs.filter(Q(ws_status=LeadStatus.NEW) | Q(ws_status__isnull=True)).filter(
             Q(international_phone__gt="") | Q(national_phone__gt="") | ~Q(emails=[])
         )
         if request.user.is_authenticated:
-            qs = qs.filter(Q(assigned_to__isnull=True) | Q(assigned_to=request.user))
+            qs = qs.filter(
+                Q(ws_assigned_to_id__isnull=True) | Q(ws_assigned_to_id=request.user.pk)
+            )
 
     if params.get("has_email") == "1":
         qs = qs.exclude(emails=[])
@@ -118,34 +140,40 @@ def filter_leads(request):
     }
     if sort not in allowed_sorts:
         sort = "-first_seen"
-    qs = qs.select_related("assigned_to").prefetch_related("tags")
-    # last_activity_at nulls should sort last regardless of direction.
+    # last_activity_at is a workspace annotation; nulls sort last either way.
     if sort == "-last_activity_at":
-        return qs.order_by(F("last_activity_at").desc(nulls_last=True))
+        return qs.order_by(F("ws_last_activity_at").desc(nulls_last=True))
     if sort == "last_activity_at":
-        return qs.order_by(F("last_activity_at").asc(nulls_last=True))
+        return qs.order_by(F("ws_last_activity_at").asc(nulls_last=True))
     return qs.order_by(sort)
 
 
 # ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
-@login_required
+@workspace_member_required
 def dashboard(request):
+    ws = request.workspace
     leads = Business.objects.all()
     total = leads.count()
-    status_counts = {
+
+    # Per-workspace status counts. Untouched leads (no WorkspaceLead) are New, so
+    # New = whole pool minus everything that's been advanced past New here.
+    wl_counts = {
         row["status"]: row["n"]
-        for row in leads.values("status").annotate(n=Count("id"))
+        for row in WorkspaceLead.objects.filter(workspace=ws)
+        .values("status").annotate(n=Count("id"))
     }
+    advanced = sum(n for s, n in wl_counts.items() if s != LeadStatus.NEW)
+    status_counts = {s.value: wl_counts.get(s.value, 0) for s in LeadStatus}
+    status_counts[LeadStatus.NEW.value] = max(0, total - advanced)
+
     by_status = [
         {"value": s.value, "label": s.label, "count": status_counts.get(s.value, 0)}
         for s in LeadStatus
     ]
 
-    # Sales funnel: cumulative "reached this stage or later" along the pipeline
-    # New -> Contacted -> Qualified -> Won, derived from each lead's current
-    # status. Lost / Not-a-fit are tracked separately as disqualified.
+    # Sales funnel: cumulative "reached this stage or later" along the pipeline.
     funnel_stages = [
         (LeadStatus.NEW, "bg-sky-500"),
         (LeadStatus.CONTACTED, "bg-amber-500"),
@@ -208,7 +236,7 @@ def dashboard(request):
 
 
 # ---------------------------------------------------------------------------
-# Search
+# Search (global, admin-run — fills the shared pool)
 # ---------------------------------------------------------------------------
 @admin_required
 def search_view(request):
@@ -249,7 +277,7 @@ def search_view(request):
 
 
 # ---------------------------------------------------------------------------
-# Jobs
+# Jobs (global)
 # ---------------------------------------------------------------------------
 @login_required
 def jobs_list(request):
@@ -287,8 +315,8 @@ def job_cancel(request, pk):
 # ---------------------------------------------------------------------------
 # Leads
 # ---------------------------------------------------------------------------
-def _leads_context(request):
-    qs = filter_leads(request)
+def _leads_context(request, ws):
+    qs = filter_leads(request, ws)
     paginator = Paginator(qs, PAGE_SIZE)
     page = paginator.get_page(request.GET.get("page"))
     querydict = request.GET.copy()
@@ -307,65 +335,81 @@ def _leads_context(request):
         "lead_statuses": LeadStatus.choices,
         "enrichment_statuses": EnrichmentStatus.choices,
         "filters": request.GET,
-        "team_members": _team_members(),
-        "tags": Tag.objects.all(),
+        "team_members": workspace_members(ws),
+        "tags": Tag.objects.filter(workspace=ws),
         "tag_colors": TAG_COLORS,
         "active_view": request.GET.get("view", ""),
     }
 
 
-@login_required
+@workspace_member_required
 def leads_list(request):
-    return render(request, "scraper/leads.html", _leads_context(request))
+    return render(request, "scraper/leads.html", _leads_context(request, request.workspace))
 
 
-@login_required
+@workspace_member_required
 def leads_table(request):
     """htmx partial — the leads table body + pagination (filtered)."""
-    return render(request, "scraper/partials/_leads_table.html", _leads_context(request))
-
-
-@login_required
-def lead_detail(request, pk):
-    lead = get_object_or_404(
-        Business.objects.select_related("assigned_to").prefetch_related("tags"), pk=pk
+    return render(
+        request, "scraper/partials/_leads_table.html",
+        _leads_context(request, request.workspace),
     )
-    activities = lead.activities.select_related("user")[:200]
-    open_tasks = lead.tasks.filter(is_done=False).select_related("assigned_to")
-    done_tasks = lead.tasks.filter(is_done=True).select_related("assigned_to")[:10]
+
+
+@workspace_member_required
+def lead_detail(request, pk):
+    ws = request.workspace
+    business = get_object_or_404(Business, pk=pk)
+    wl = crm.get_or_create_lead(ws, business)
+    activities = (
+        Activity.objects.filter(business=business, workspace=ws)
+        .select_related("user")[:200]
+    )
+    open_tasks = (
+        Task.objects.filter(business=business, workspace=ws, is_done=False)
+        .select_related("assigned_to")
+    )
+    done_tasks = (
+        Task.objects.filter(business=business, workspace=ws, is_done=True)
+        .select_related("assigned_to")[:10]
+    )
     return render(request, "scraper/lead_detail.html", {
-        "lead": lead,
+        "lead": business,
+        "wl": wl,
         "lead_statuses": LeadStatus.choices,
         "activities": activities,
-        "contacts": lead.contacts.all(),
+        "contacts": business.contacts.all(),
         "open_tasks": open_tasks,
         "done_tasks": done_tasks,
         "composer_types": [(t.value, t.label) for t in COMPOSER_ACTIVITY_TYPES],
-        "team_members": _team_members(),
-        "all_tags": Tag.objects.all(),
+        "team_members": workspace_members(ws),
+        "all_tags": Tag.objects.filter(workspace=ws),
         "contact_form": ContactForm(),
-        "task_form": TaskForm(),
+        "task_form": TaskForm(workspace=ws),
     })
 
 
-@login_required
+@workspace_member_required
 @require_POST
 def lead_update_status(request, pk):
-    lead = get_object_or_404(Business, pk=pk)
+    ws = request.workspace
+    business = get_object_or_404(Business, pk=pk)
+    wl = crm.get_or_create_lead(ws, business)
     # The select is named status-<pk> so it stays unambiguous inside the
     # multi-row bulk form; fall back to "status" for safety.
     new_status = request.POST.get(f"status-{pk}") or request.POST.get("status", "")
-    crm.change_status(lead, new_status, user=request.user)
+    crm.change_status(wl, new_status, user=request.user)
     return render(request, "scraper/partials/_status_select.html", {
-        "lead": lead, "lead_statuses": LeadStatus.choices,
+        "lead": business, "status": wl.status, "lead_statuses": LeadStatus.choices,
     })
 
 
-@login_required
+@workspace_member_required
 @require_POST
 def lead_add_activity(request, pk):
     """Log a timeline entry (note / call / email / whatsapp / meeting)."""
-    lead = get_object_or_404(Business, pk=pk)
+    ws = request.workspace
+    business = get_object_or_404(Business, pk=pk)
     kind = request.POST.get("kind", "note")
     valid_kinds = {t.value for t in COMPOSER_ACTIVITY_TYPES}
     if kind not in valid_kinds:
@@ -373,67 +417,79 @@ def lead_add_activity(request, pk):
     body = request.POST.get("body", "").strip()
     if not body:
         messages.error(request, "Write something before logging it.")
-        return redirect("scraper:lead_detail", pk=lead.pk)
-    crm.log_activity(lead, user=request.user, kind=kind, body=body)
+        return redirect("scraper:lead_detail", pk=business.pk)
+    wl = crm.get_or_create_lead(ws, business)
+    crm.log_activity(wl, user=request.user, kind=kind, body=body)
     messages.success(request, "Logged to the timeline.")
-    return redirect("scraper:lead_detail", pk=lead.pk)
+    return redirect("scraper:lead_detail", pk=business.pk)
 
 
-@login_required
+@workspace_member_required
 @require_POST
 def lead_assign(request, pk):
-    """Set (or clear) the owner of a single lead."""
-    lead = get_object_or_404(Business, pk=pk)
+    """Set (or clear) the owner of a single lead within this workspace."""
+    ws = request.workspace
+    business = get_object_or_404(Business, pk=pk)
+    wl = crm.get_or_create_lead(ws, business)
     raw = request.POST.get("assignee", "").strip()
     assignee = None
     if raw == "me":
         assignee = request.user
     elif raw.isdigit():
-        assignee = get_user_model().objects.filter(pk=int(raw), is_active=True).first()
-    crm.assign_lead(lead, assignee, by=request.user)
+        assignee = workspace_members(ws).filter(pk=int(raw)).first()
+    crm.assign_lead(wl, assignee, by=request.user)
     messages.success(
         request,
         f"Assigned to {assignee.email}." if assignee else "Lead unassigned.",
     )
-    return redirect("scraper:lead_detail", pk=lead.pk)
+    return redirect("scraper:lead_detail", pk=business.pk)
 
 
-@login_required
+@workspace_member_required
 @require_POST
 def lead_add_tag(request, pk):
-    lead = get_object_or_404(Business, pk=pk)
+    ws = request.workspace
+    business = get_object_or_404(Business, pk=pk)
+    wl = crm.get_or_create_lead(ws, business)
     tag_id = request.POST.get("tag", "").strip()
-    tag = Tag.objects.filter(pk=tag_id).first() if tag_id.isdigit() else None
+    tag = (
+        Tag.objects.filter(pk=tag_id, workspace=ws).first()
+        if tag_id.isdigit() else None
+    )
     if tag:
-        crm.add_tag(lead, tag, user=request.user)
-    return redirect("scraper:lead_detail", pk=lead.pk)
+        crm.add_tag(wl, tag, user=request.user)
+    return redirect("scraper:lead_detail", pk=business.pk)
 
 
-@login_required
+@workspace_member_required
 @require_POST
 def lead_remove_tag(request, pk, tag_id):
-    lead = get_object_or_404(Business, pk=pk)
-    tag = Tag.objects.filter(pk=tag_id).first()
+    ws = request.workspace
+    business = get_object_or_404(Business, pk=pk)
+    wl = crm.get_or_create_lead(ws, business)
+    tag = Tag.objects.filter(pk=tag_id, workspace=ws).first()
     if tag:
-        crm.remove_tag(lead, tag, user=request.user)
-    return redirect("scraper:lead_detail", pk=lead.pk)
+        crm.remove_tag(wl, tag, user=request.user)
+    return redirect("scraper:lead_detail", pk=business.pk)
 
 
-@login_required
+@workspace_member_required
 @require_POST
 def lead_add_contact(request, pk):
-    lead = get_object_or_404(Business, pk=pk)
+    ws = request.workspace
+    business = get_object_or_404(Business, pk=pk)
     form = ContactForm(request.POST)
     if form.is_valid():
         contact = form.save(commit=False)
-        contact.business = lead
+        contact.business = business
         contact.created_by = request.user
         # Only one primary contact per lead.
         if contact.is_primary:
-            lead.contacts.update(is_primary=False)
+            business.contacts.update(is_primary=False)
         contact.save()
+        wl = crm.get_or_create_lead(ws, business)
         crm.log_activity(
-            lead, user=request.user, kind="contact",
+            wl, user=request.user, kind="contact",
             body=f"Added contact {contact.name}"
             + (f" ({contact.title})" if contact.title else ""),
             contact_id=contact.pk,
@@ -441,45 +497,47 @@ def lead_add_contact(request, pk):
         messages.success(request, f"Added contact {contact.name}.")
     else:
         messages.error(request, "Could not add contact — check the fields.")
-    return redirect("scraper:lead_detail", pk=lead.pk)
+    return redirect("scraper:lead_detail", pk=business.pk)
 
 
-@login_required
+@workspace_member_required
 @require_POST
 def lead_delete_contact(request, pk, contact_id):
-    lead = get_object_or_404(Business, pk=pk)
-    contact = get_object_or_404(Contact, pk=contact_id, business=lead)
+    business = get_object_or_404(Business, pk=pk)
+    contact = get_object_or_404(Contact, pk=contact_id, business=business)
     name = contact.name
     contact.delete()
     messages.info(request, f"Removed contact {name}.")
-    return redirect("scraper:lead_detail", pk=lead.pk)
+    return redirect("scraper:lead_detail", pk=business.pk)
 
 
-@login_required
+@workspace_member_required
 @require_POST
 def lead_add_task(request, pk):
-    lead = get_object_or_404(Business, pk=pk)
-    form = TaskForm(request.POST)
+    ws = request.workspace
+    business = get_object_or_404(Business, pk=pk)
+    form = TaskForm(request.POST, workspace=ws)
     if form.is_valid():
         data = form.cleaned_data
+        wl = crm.get_or_create_lead(ws, business)
         crm.create_task(
-            lead, title=data["title"], assignee=data.get("assigned_to"),
+            wl, title=data["title"], assignee=data.get("assigned_to"),
             by=request.user, due_date=data.get("due_date"),
         )
         messages.success(request, "Task added.")
     else:
         messages.error(request, "Give the task a title.")
-    return redirect("scraper:lead_detail", pk=lead.pk)
+    return redirect("scraper:lead_detail", pk=business.pk)
 
 
 @admin_required
 @require_POST
 def lead_enrich_one(request, pk):
-    lead = get_object_or_404(Business, pk=pk)
-    if not lead.website:
-        messages.error(request, f"{lead.name} has no website to enrich.")
-        return redirect("scraper:lead_detail", pk=lead.pk)
-    job = crawler.enqueue_enrich([lead.pk])
+    business = get_object_or_404(Business, pk=pk)
+    if not business.website:
+        messages.error(request, f"{business.name} has no website to enrich.")
+        return redirect("scraper:lead_detail", pk=business.pk)
+    job = crawler.enqueue_enrich([business.pk])
     messages.success(request, "Enrichment queued.")
     return redirect("scraper:job_detail", pk=job.pk)
 
@@ -495,12 +553,13 @@ def leads_enrich(request):
     return redirect("scraper:job_detail", pk=job.pk)
 
 
-@login_required
+@workspace_member_required
 def leads_export(request):
-    qs = filter_leads(request).prefetch_related("tags")
+    ws = request.workspace
+    qs = filter_leads(request, ws)
     response = HttpResponse(content_type="text/csv")
     response["Content-Disposition"] = (
-        f'attachment; filename="naughtyscrape-leads-{timezone.now():%Y%m%d-%H%M}.csv"'
+        f'attachment; filename="naughtyscrape-{ws.slug}-leads-{timezone.now():%Y%m%d-%H%M}.csv"'
     )
     writer = csv.writer(response)
     writer.writerow([
@@ -510,17 +569,19 @@ def leads_export(request):
     ])
     for b in qs.iterator():
         socials = b.social_links or {}
+        owner = b.effective_assignee
         writer.writerow([
-            b.name, b.get_status_display(),
-            b.assigned_to.email if b.assigned_to else "",
-            ", ".join(t.name for t in b.tags.all()),
+            b.name, b.effective_status_display,
+            owner.email if owner else "",
+            ", ".join(t.name for t in b.effective_tags),
             b.rating or "", b.user_ratings_total,
             b.international_phone or b.national_phone, b.website,
             "; ".join(b.emails or []), b.city, b.country, b.formatted_address,
             b.google_maps_uri, socials.get("facebook", ""),
             socials.get("instagram", ""), socials.get("linkedin", ""),
             b.primary_type,
-            b.last_activity_at.strftime("%Y-%m-%d %H:%M") if b.last_activity_at else "",
+            b.effective_last_activity_at.strftime("%Y-%m-%d %H:%M")
+            if b.effective_last_activity_at else "",
         ])
     return response
 
@@ -528,10 +589,11 @@ def leads_export(request):
 # ---------------------------------------------------------------------------
 # Bulk actions (assign / status / tag / task), plus tag creation
 # ---------------------------------------------------------------------------
-@login_required
+@workspace_member_required
 @require_POST
 def leads_bulk(request):
     """Apply one action to a set of selected leads, then return to the list."""
+    ws = request.workspace
     ids = [int(i) for i in request.POST.getlist("ids") if i.isdigit()]
     action = request.POST.get("action", "").strip()
     back = request.POST.get("next") or "scraper:leads"
@@ -540,8 +602,9 @@ def leads_bulk(request):
         messages.error(request, "Select at least one lead first.")
         return redirect(back)
 
-    leads = list(Business.objects.filter(pk__in=ids))
-    n = len(leads)
+    businesses = list(Business.objects.filter(pk__in=ids))
+    wls = [crm.get_or_create_lead(ws, b) for b in businesses]
+    n = len(wls)
 
     if action == "assign":
         raw = request.POST.get("assignee", "").strip()
@@ -549,23 +612,23 @@ def leads_bulk(request):
         if raw == "me":
             assignee = request.user
         elif raw.isdigit():
-            assignee = get_user_model().objects.filter(pk=int(raw), is_active=True).first()
-        for lead in leads:
-            crm.assign_lead(lead, assignee, by=request.user)
+            assignee = workspace_members(ws).filter(pk=int(raw)).first()
+        for wl in wls:
+            crm.assign_lead(wl, assignee, by=request.user)
         who = assignee.email if assignee else "nobody"
         messages.success(request, f"Assigned {n} lead(s) to {who}.")
 
     elif action == "status":
         new_status = request.POST.get("status", "").strip()
         changed = sum(
-            1 for lead in leads if crm.change_status(lead, new_status, user=request.user)
+            1 for wl in wls if crm.change_status(wl, new_status, user=request.user)
         )
         messages.success(request, f"Updated status on {changed} lead(s).")
 
     elif action == "tag":
-        tag = Tag.objects.filter(pk=request.POST.get("tag", "")).first()
+        tag = Tag.objects.filter(pk=request.POST.get("tag", ""), workspace=ws).first()
         if tag:
-            added = sum(1 for lead in leads if crm.add_tag(lead, tag, user=request.user))
+            added = sum(1 for wl in wls if crm.add_tag(wl, tag, user=request.user))
             messages.success(request, f"Tagged {added} lead(s) “{tag.name}”.")
         else:
             messages.error(request, "Pick a tag to apply.")
@@ -577,12 +640,11 @@ def leads_bulk(request):
             return redirect(back)
         raw = request.POST.get("assignee", "").strip()
         assignee = request.user if raw == "me" else (
-            get_user_model().objects.filter(pk=int(raw), is_active=True).first()
-            if raw.isdigit() else None
+            workspace_members(ws).filter(pk=int(raw)).first() if raw.isdigit() else None
         )
         due = _parse_due_date(request.POST.get("due_date"))
-        for lead in leads:
-            crm.create_task(lead, title=title, assignee=assignee, by=request.user, due_date=due)
+        for wl in wls:
+            crm.create_task(wl, title=title, assignee=assignee, by=request.user, due_date=due)
         messages.success(request, f"Created a task on {n} lead(s).")
 
     else:
@@ -591,10 +653,10 @@ def leads_bulk(request):
     return redirect(back)
 
 
-@admin_required
+@workspace_member_required
 @require_POST
 def tag_create(request):
-    form = TagForm(request.POST)
+    form = TagForm(request.POST, workspace=request.workspace)
     if form.is_valid():
         tag = form.save()
         messages.success(request, f"Created tag “{tag.name}”.")
@@ -605,10 +667,10 @@ def tag_create(request):
 
 
 # ---------------------------------------------------------------------------
-# Tasks
+# Tasks (workspace-scoped)
 # ---------------------------------------------------------------------------
-def _filter_tasks(request):
-    qs = Task.objects.select_related("business", "assigned_to")
+def _filter_tasks(request, ws):
+    qs = Task.objects.filter(workspace=ws).select_related("business", "assigned_to")
     params = request.GET
 
     scope = params.get("scope", "mine")
@@ -634,40 +696,41 @@ def _filter_tasks(request):
     return qs
 
 
-@login_required
+@workspace_member_required
 def tasks_list(request):
-    qs = _filter_tasks(request)
+    ws = request.workspace
+    qs = _filter_tasks(request, ws)
     paginator = Paginator(qs, 50)
     page = paginator.get_page(request.GET.get("page"))
     return render(request, "scraper/tasks.html", {
         "page": page,
         "total_matched": paginator.count,
-        "team_members": _team_members(),
+        "team_members": workspace_members(ws),
         "filters": request.GET,
         "scope": request.GET.get("scope", "mine"),
         "state": request.GET.get("state", "open"),
     })
 
 
-@login_required
+@workspace_member_required
 @require_POST
 def task_toggle(request, pk):
-    task = get_object_or_404(Task, pk=pk)
+    task = get_object_or_404(Task, pk=pk, workspace=request.workspace)
     done = request.POST.get("done", "1") == "1"
     crm.complete_task(task, user=request.user, done=done)
     return redirect(request.POST.get("next") or "scraper:tasks")
 
 
 # ---------------------------------------------------------------------------
-# My Work — the rep's daily home: my leads, due today, overdue, ready to contact
+# My Work — the rep's daily home, scoped to the active workspace
 # ---------------------------------------------------------------------------
-@login_required
+@workspace_member_required
 def work(request):
+    ws = request.workspace
     user = request.user
     today = timezone.localdate()
 
-    my_leads = Business.objects.filter(assigned_to=user)
-    my_open_tasks = Task.objects.filter(assigned_to=user, is_done=False)
+    my_open_tasks = Task.objects.filter(workspace=ws, assigned_to=user, is_done=False)
     due_today = (
         my_open_tasks.filter(due_date=today)
         .select_related("business").order_by("-created_at")
@@ -676,39 +739,153 @@ def work(request):
         my_open_tasks.filter(due_date__lt=today)
         .select_related("business").order_by("due_date")
     )
-    ready = (
-        Business.objects.filter(status=LeadStatus.NEW)
+
+    ready_qs = (
+        Business.objects.with_workspace_state(ws)
+        .filter(Q(ws_status=LeadStatus.NEW) | Q(ws_status__isnull=True))
         .filter(Q(international_phone__gt="") | Q(national_phone__gt="") | ~Q(emails=[]))
-        .filter(Q(assigned_to__isnull=True) | Q(assigned_to=user))
-        .select_related("assigned_to")
-        .prefetch_related("tags")[:25]
+        .filter(Q(ws_assigned_to_id__isnull=True) | Q(ws_assigned_to_id=user.pk))
     )
 
     context = {
-        "my_leads_count": my_leads.count(),
+        "my_leads_count": WorkspaceLead.objects.filter(
+            workspace=ws, assigned_to=user
+        ).count(),
         "due_today": list(due_today),
         "overdue": list(overdue),
-        "ready": list(ready),
-        "ready_count": (
-            Business.objects.filter(status=LeadStatus.NEW)
-            .filter(Q(international_phone__gt="") | Q(national_phone__gt="") | ~Q(emails=[]))
-            .filter(Q(assigned_to__isnull=True) | Q(assigned_to=user))
-            .count()
-        ),
+        "ready": list(ready_qs[:25]),
+        "ready_count": ready_qs.count(),
         "no_due_date": list(
             my_open_tasks.filter(due_date__isnull=True)
             .select_related("business").order_by("-created_at")[:25]
         ),
         "recent_my_leads": list(
-            my_leads.select_related("assigned_to").prefetch_related("tags")
-            .order_by(F("last_activity_at").desc(nulls_last=True))[:10]
+            Business.objects.with_workspace_state(ws)
+            .filter(ws_assigned_to_id=user.pk)
+            .order_by(F("ws_last_activity_at").desc(nulls_last=True))[:10]
         ),
     }
     return render(request, "scraper/work.html", context)
 
 
 # ---------------------------------------------------------------------------
-# Team management (admin only)
+# Workspaces
+# ---------------------------------------------------------------------------
+@login_required
+def no_workspace(request):
+    """Empty state for users not yet in any workspace."""
+    return render(request, "scraper/no_workspace.html", {
+        "is_app_admin": request.user.is_admin,
+    })
+
+
+@login_required
+@require_POST
+def workspace_switch(request):
+    """Set the active workspace in the session (if the user may access it)."""
+    raw = request.POST.get("workspace", "").strip()
+    back = request.POST.get("next") or "scraper:dashboard"
+    ws = Workspace.objects.filter(pk=raw).first() if raw.isdigit() else None
+    if ws and can_access(request.user, ws):
+        request.session[SESSION_KEY] = ws.pk
+        messages.success(request, f"Switched to {ws.name}.")
+    else:
+        messages.error(request, "You can't access that workspace.")
+    return redirect(back)
+
+
+@login_required
+def workspaces_list(request):
+    workspaces = user_workspaces(request.user).order_by("-is_default", "name")
+    return render(request, "scraper/workspaces.html", {
+        "workspaces": workspaces,
+        "can_create": request.user.is_admin,
+    })
+
+
+@admin_required
+@require_POST
+def workspace_create(request):
+    name = request.POST.get("name", "").strip()
+    description = request.POST.get("description", "").strip()
+    if not name:
+        messages.error(request, "Give the workspace a name.")
+        return redirect("scraper:workspaces")
+    ws = Workspace(name=name, description=description, created_by=request.user)
+    ws.save()
+    WorkspaceMembership.objects.get_or_create(
+        workspace=ws, user=request.user, defaults={"added_by": request.user}
+    )
+    messages.success(request, f"Created workspace “{ws.name}”.")
+    return redirect("scraper:workspace_detail", pk=ws.pk)
+
+
+def _require_workspace_access(request, pk):
+    """Fetch a workspace the current user may manage, or None."""
+    ws = get_object_or_404(Workspace, pk=pk)
+    if not can_access(request.user, ws):
+        return None
+    return ws
+
+
+@login_required
+def workspace_detail(request, pk):
+    ws = _require_workspace_access(request, pk)
+    if ws is None:
+        messages.error(request, "You're not a member of that workspace.")
+        return redirect("scraper:workspaces")
+    members = ws.members.order_by("-is_active", "first_name", "email")
+    member_ids = set(members.values_list("pk", flat=True))
+    addable = (
+        get_user_model().objects.filter(is_active=True)
+        .exclude(pk__in=member_ids).order_by("first_name", "email")
+    )
+    return render(request, "scraper/workspace_detail.html", {
+        "workspace": ws,
+        "members": members,
+        "addable": addable,
+    })
+
+
+@login_required
+@require_POST
+def workspace_add_member(request, pk):
+    ws = _require_workspace_access(request, pk)
+    if ws is None:
+        messages.error(request, "You're not a member of that workspace.")
+        return redirect("scraper:workspaces")
+    raw = request.POST.get("user", "").strip()
+    user = (
+        get_user_model().objects.filter(pk=int(raw), is_active=True).first()
+        if raw.isdigit() else None
+    )
+    if not user:
+        messages.error(request, "Pick a user to add.")
+        return redirect("scraper:workspace_detail", pk=ws.pk)
+    _, created = WorkspaceMembership.objects.get_or_create(
+        workspace=ws, user=user, defaults={"added_by": request.user}
+    )
+    if created:
+        messages.success(request, f"Added {user.email} to {ws.name}.")
+    else:
+        messages.info(request, f"{user.email} is already a member.")
+    return redirect("scraper:workspace_detail", pk=ws.pk)
+
+
+@login_required
+@require_POST
+def workspace_remove_member(request, pk, user_id):
+    ws = _require_workspace_access(request, pk)
+    if ws is None:
+        messages.error(request, "You're not a member of that workspace.")
+        return redirect("scraper:workspaces")
+    WorkspaceMembership.objects.filter(workspace=ws, user_id=user_id).delete()
+    messages.success(request, "Member removed.")
+    return redirect("scraper:workspace_detail", pk=ws.pk)
+
+
+# ---------------------------------------------------------------------------
+# Team management (app-level users — admin only)
 # ---------------------------------------------------------------------------
 @admin_required
 def team_list(request):

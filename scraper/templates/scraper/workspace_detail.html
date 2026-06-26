@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ workspace.name }} · Workspace{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+  <div class="mb-4"><a href="{% url 'scraper:workspaces' %}" class="text-sm text-stone-500 hover:underline">← Workspaces</a></div>
+  <h1 class="text-2xl font-bold text-stone-900 mb-1">{{ workspace.name }}</h1>
+  <p class="text-sm text-stone-500 mb-6">{{ workspace.description|default:"Members of this workspace work its sales funnel." }}</p>
+
+  <div class="grid lg:grid-cols-3 gap-6">
+    <!-- Members -->
+    <div class="lg:col-span-2 rounded-xl bg-white shadow-sm border border-gray-100 overflow-hidden">
+      <table class="min-w-full divide-y divide-gray-100 text-sm">
+        <thead class="bg-stone-50 text-stone-500">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Member</th>
+            <th class="px-4 py-3 text-left font-medium">Status</th>
+            <th class="px-4 py-3"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-50">
+          {% for m in members %}
+          <tr class="{% if not m.is_active %}opacity-50{% endif %}">
+            <td class="px-4 py-3">
+              <div class="font-medium text-stone-800">{{ m.email }}</div>
+              {% if m.get_full_name %}<div class="text-xs text-stone-400">{{ m.get_full_name }}</div>{% endif %}
+            </td>
+            <td class="px-4 py-3">
+              {% if m.is_active %}
+                <span class="rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-xs">Active</span>
+              {% else %}
+                <span class="rounded-full bg-gray-100 text-gray-500 px-2 py-0.5 text-xs">Inactive</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 text-right">
+              <form method="post" action="{% url 'scraper:workspace_remove_member' workspace.pk m.pk %}"
+                    onsubmit="return confirm('Remove {{ m.email|escapejs }} from {{ workspace.name|escapejs }}?')">
+                {% csrf_token %}
+                <button class="text-xs text-rose-600 hover:underline">Remove</button>
+              </form>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="3" class="px-4 py-8 text-center text-stone-400">No members yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Add member -->
+    <div class="rounded-xl bg-white p-5 shadow-sm border border-gray-100">
+      <h2 class="font-semibold text-stone-900 mb-4">Add member</h2>
+      {% if addable %}
+      <form method="post" action="{% url 'scraper:workspace_add_member' workspace.pk %}" class="space-y-3">
+        {% csrf_token %}
+        <select name="user" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-400 focus:ring-amber-400">
+          {% for u in addable %}<option value="{{ u.pk }}">{{ u.get_full_name|default:u.email }}</option>{% endfor %}
+        </select>
+        <button class="w-full rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-stone-900 hover:bg-amber-400">Add to workspace</button>
+      </form>
+      {% else %}
+      <p class="text-sm text-stone-400">Everyone's already a member.{% if is_app_admin %} <a href="{% url 'scraper:team' %}" class="text-amber-700 hover:underline">Add a new user →</a>{% endif %}</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

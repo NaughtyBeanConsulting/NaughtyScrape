@@ -37,6 +37,14 @@ urlpatterns = [
     path("tasks/", views.tasks_list, name="tasks"),
     path("tasks/<int:pk>/toggle/", views.task_toggle, name="task_toggle"),
 
+    path("workspaces/", views.workspaces_list, name="workspaces"),
+    path("workspaces/create/", views.workspace_create, name="workspace_create"),
+    path("workspaces/switch/", views.workspace_switch, name="workspace_switch"),
+    path("workspaces/none/", views.no_workspace, name="no_workspace"),
+    path("workspaces/<int:pk>/", views.workspace_detail, name="workspace_detail"),
+    path("workspaces/<int:pk>/members/add/", views.workspace_add_member, name="workspace_add_member"),
+    path("workspaces/<int:pk>/members/<int:user_id>/remove/", views.workspace_remove_member, name="workspace_remove_member"),
+
     path("team/", views.team_list, name="team"),
     path("team/create/", views.team_create, name="team_create"),
     path("team/<int:pk>/role/", views.team_set_role, name="team_role"),

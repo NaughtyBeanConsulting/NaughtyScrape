@@ -144,15 +144,19 @@ class TaskForm(forms.ModelForm):
             "due_date": forms.DateInput(attrs={"class": _INPUT_SM, "type": "date"}),
         }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, workspace=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["assigned_to"].queryset = active_member_queryset()
+        from .workspaces import workspace_members
+        self.fields["assigned_to"].queryset = (
+            workspace_members(workspace) if workspace is not None
+            else active_member_queryset()
+        )
         self.fields["assigned_to"].required = False
         self.fields["assigned_to"].empty_label = "Unassigned"
 
 
 class TagForm(forms.ModelForm):
-    """Create a tag (admin)."""
+    """Create a tag, scoped to the active workspace."""
 
     class Meta:
         model = Tag
@@ -162,8 +166,9 @@ class TagForm(forms.ModelForm):
             "color": forms.Select(attrs={"class": _INPUT_SM}),
         }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, workspace=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self._workspace = workspace
         from .models import TAG_COLORS
         self.fields["color"].widget = forms.Select(
             attrs={"class": _INPUT_SM}, choices=[(c, c.title()) for c in TAG_COLORS]
@@ -171,6 +176,17 @@ class TagForm(forms.ModelForm):
 
     def clean_name(self):
         name = self.cleaned_data["name"].strip()
-        if Tag.objects.filter(name__iexact=name).exists():
+        qs = Tag.objects.filter(name__iexact=name)
+        if self._workspace is not None:
+            qs = qs.filter(workspace=self._workspace)
+        if qs.exists():
             raise forms.ValidationError("A tag with that name already exists.")
         return name
+
+    def save(self, commit=True):
+        tag = super().save(commit=False)
+        if self._workspace is not None:
+            tag.workspace = self._workspace
+        if commit:
+            tag.save()
+        return tag

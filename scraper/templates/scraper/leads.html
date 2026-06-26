@@ -95,7 +95,6 @@
   </div>
 </form>
 
-{% if is_app_admin %}
 <details class="mb-4">
   <summary class="cursor-pointer text-xs text-stone-500 hover:text-stone-700 list-none">+ New tag</summary>
   <form method="post" action="{% url 'scraper:tag_create' %}" class="mt-2 flex flex-wrap items-end gap-2">
@@ -108,7 +107,6 @@
     <button class="rounded-md bg-stone-800 px-3 py-1.5 text-sm text-white hover:bg-stone-700">Create tag</button>
   </form>
 </details>
-{% endif %}
 
 <!-- Results (htmx-swapped) wrapped in the bulk-action form -->
 <form id="bulk-form" method="post" action="{% url 'scraper:leads_bulk' %}">

@@ -20,6 +20,33 @@
           <a href="{% url 'scraper:dashboard' %}" class="flex items-center gap-2 font-semibold">
             <span class="text-xl">☕</span> NaughtyScrape
           </a>
+          {% if request.user.is_authenticated and active_workspace %}
+          <div class="relative" x-data="{ wopen: false }">
+            <button @click="wopen = !wopen" class="flex items-center gap-1.5 rounded-md bg-stone-800 px-2.5 py-1.5 text-sm hover:bg-stone-700">
+              <span class="text-amber-400">▦</span>
+              <span class="max-w-[10rem] truncate">{{ active_workspace.name }}</span>
+              <span class="text-stone-400">▾</span>
+            </button>
+            <div x-show="wopen" @click.outside="wopen = false" x-cloak
+                 class="absolute left-0 mt-2 w-56 rounded-md bg-white text-stone-700 shadow-lg ring-1 ring-black/5 py-1 z-30">
+              <div class="px-3 py-1 text-[11px] uppercase tracking-wide text-stone-400">Workspace</div>
+              {% for w in my_workspaces %}
+              <form method="post" action="{% url 'scraper:workspace_switch' %}">
+                {% csrf_token %}
+                <input type="hidden" name="workspace" value="{{ w.pk }}">
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <button class="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-stone-50 {% if w.pk == active_workspace.pk %}font-semibold text-amber-700{% endif %}">
+                  <span class="truncate">{{ w.name }}</span>
+                  {% if w.pk == active_workspace.pk %}<span>✓</span>{% endif %}
+                </button>
+              </form>
+              {% endfor %}
+              <div class="border-t border-stone-100 mt-1 pt-1">
+                <a href="{% url 'scraper:workspaces' %}" class="block px-3 py-2 text-sm hover:bg-stone-50">Manage workspaces…</a>
+              </div>
+            </div>
+          </div>
+          {% endif %}
           {% if request.user.is_authenticated %}
           <div class="hidden sm:flex items-center gap-1 text-sm">
             {% url 'scraper:dashboard' as u_dash %}
@@ -28,6 +55,7 @@
             {% url 'scraper:leads' as u_leads %}
             {% url 'scraper:tasks' as u_tasks %}
             {% url 'scraper:jobs' as u_jobs %}
+            {% url 'scraper:workspaces' as u_workspaces %}
             {% url 'scraper:team' as u_team %}
             <a href="{{ u_dash }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if request.path == u_dash %}bg-stone-700{% endif %}">Dashboard</a>
             <a href="{{ u_work }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_work in request.path %}bg-stone-700{% endif %}">My work{% if nav_my_due_count %} <span class="ml-1 rounded-full bg-rose-500 px-1.5 text-[11px] font-semibold text-white">{{ nav_my_due_count }}</span>{% endif %}</a>
@@ -35,6 +63,7 @@
             <a href="{{ u_tasks }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_tasks in request.path %}bg-stone-700{% endif %}">Tasks</a>
             {% if is_app_admin %}<a href="{{ u_search }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if request.path == u_search %}bg-stone-700{% endif %}">Search</a>{% endif %}
             <a href="{{ u_jobs }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_jobs in request.path %}bg-stone-700{% endif %}">Jobs</a>
+            <a href="{{ u_workspaces }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_workspaces in request.path %}bg-stone-700{% endif %}">Workspaces</a>
             {% if is_app_admin %}<a href="{{ u_team }}" class="px-3 py-1.5 rounded hover:bg-stone-700 {% if u_team in request.path %}bg-stone-700{% endif %}">Team</a>{% endif %}
           </div>
           {% endif %}
